@@ -2,12 +2,28 @@
 #include <stdlib.h>
 #include <string.h>
 
+
+#define IWarning(fmt, ...)  printf("*Warning*: " fmt, ##__VA_ARGS__)
+#define IError(fmt, ...)    printf("*Error*: " fmt, ##__VA_ARGS__)
+#define IDEBUG_MORE
+
+#ifdef  IDEBUG_MORE
+#define IMessage(fmt, ...)  printf("*Message*: " fmt, ##__VA_ARGS__)
+#define ITraceEnter()     IMessage("Func %s enter.", __FUNCTION__)
+#define ITraceLeave()     IMessage("Func %s leave.", __FUNCTION__)
+#else
+#define IMessage(fmt, ...)
+#define ITraceEnter()
+#define ITraceLeave()
+#endif
+
 typedef unsigned char   UInt8;
 typedef unsigned char   Boolean;
 typedef const char*     String;
-//typedef const char*     Symbol;
+typedef const char*     Symbol;
 typedef struct _Cell    Cell;
 typedef struct _Number  Number;
+typedef struct _Conti   Conti;
 typedef struct _IScheme IScheme;
 
 #define TRUE              1
@@ -15,19 +31,6 @@ typedef struct _IScheme IScheme;
 #define SEGS_NUM          100
 #define SEG_CELLS_NUM     5000
 #define SEG_MEM_SIZE      (SEG_CELLS_NUM * sizeof(Cell))
-#define IWarning(v)       printf("*Warning*: "##v)
-#define IError(v)         printf("*Error*: "##v)
-#define IDEBUG_MORE
-
-#ifdef  IDEBUG_MORE
-#define IMessage(v)       printf("*Message*: "##v)
-#define ITraceEnter()     IMessage("Func "##__FUNCTION__##" enter.")
-#define ITraceLeave()     IMessage("Func "##__FUNCTION__##" leave.")
-#else
-#define IMessage(v)
-#define ITraceEnter()
-#define ITraceLeave()
-#endif
 
 enum Type {SYNTAX=1, CHAR, BOOLEAN, NUMBER, STRING, SYMBOL, CONS, VECTOR, EXPR, LAMBDA, PROC, MACRO, CONTI};
 

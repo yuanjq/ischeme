@@ -105,9 +105,9 @@ static OpCode g_opcodes[] = {
     {0}
 };
 
-static IScheme *g_isc = NULL;
+static IScheme g_isc = {0};
 
-static void gc(IScheme *isc, Cell *args, Cell *env);
+static void gc(IScheme *isc);//, Cell *args, Cell *env);
 
 /************** memery manager ************/
 static int seg_alloc(IScheme *isc, int num)
@@ -133,21 +133,21 @@ static int seg_alloc(IScheme *isc, int num)
 
 static Cell *cell_alloc()//Cell *args, Cell *env)
 {
-    if (!g_isc->freeCells) {
-        //gc(g_isc, args, env);
-        if (!g_isc->freeCells && seg_alloc(g_isc, 1) <= 0) {
+    if (!g_isc.freeCells) {
+        gc(&g_isc);//, args, env);
+        if (!g_isc.freeCells && seg_alloc(&g_isc, 1) <= 0) {
             IError("no memery.");
             return NULL;
         }
     }
 
-    Cell *c = g_isc->freeCells;
-    g_isc->freeCells = c->next;
-    g_isc->freeCellCount--;
+    Cell *c = g_isc.freeCells;
+    g_isc.freeCells = c->next;
+    g_isc.freeCellCount--;
     return c;
 }
 
-static void gc(IScheme *isc, Cell *args, Cell *env)
+static void gc(IScheme *isc)//, Cell *args, Cell *env)
 {
     ITraceEnter();
     // TODO:
@@ -233,7 +233,7 @@ static Cell *rplacd(Cell *c, Cell *d)    { return isCons(c) ? c->cons.d = d : NU
 
 /***************** repl loop ******************/
 
-static Cell* op_func(IScheme *isc, Cell *c)
+static Cell* op_func(IScheme *isc, int op)
 {
     return 0;
 }

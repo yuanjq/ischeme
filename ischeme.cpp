@@ -265,7 +265,7 @@ static void new_syntax(IScheme *isc, String s)
 
 static Cell *findEnvir(IScheme *isc, Cell *s)
 {
-    for (Cell *e = isc->envir; e; e = cdr(isc->envir)) {
+    for (Cell *e = isc->globalEnvir; e; e = cdr(isc->globalEnvir)) {
         if (isCons(car(e)) && caar(e) == s)
             return car(e);
     }
@@ -278,33 +278,40 @@ static void new_envir(IScheme *isc, Cell *s, Cell *v)
     if ((e = findEnvir(isc, s))) {
         rplacd(e, v);
     } else {
-        isc->envir = cons(e, isc->envir);
+        isc->globalEnvir = cons(e, isc->globalEnvir);
     }
 }
 
 static void isc_init()
 {
-    g_isc = (IScheme*)malloc(sizeof(IScheme));
-    if (!g_isc) {
-        IError("ischeme init failed.");
-        return;
-    }
-    g_isc->freeCellCount = 0;
-    g_isc->freeCells = NULL;
-    g_isc->lastSeg = -1;
-    g_isc->envir = NULL;
-    seg_alloc(g_isc, 3);
+    g_isc.freeCellCount = 0;
+    g_isc.freeCells = NULL;
+    g_isc.lastSeg = -1;
+    g_isc.globalEnvir = NULL;
+    seg_alloc(&g_isc, 3);
 
     for (int i = 0; i < sizeof(g_opcodes)/sizeof(OpCode); i++) {
         if (g_opcodes[i].name) {
-            if (g_opcodes[i].t == SYNTAX) new_syntax(g_isc, g_opcodes[i].name);
-            new_envir(g_isc, internal(g_isc, g_opcodes[i].name), mkLong(i));
+            if (g_opcodes[i].t == SYNTAX) new_syntax(&g_isc, g_opcodes[i].name);
+            new_envir(&g_isc, internal(&g_isc, g_opcodes[i].name), mkLong(i));
         }
+    }
+}
+
+static void isc_repl()
+{
+    //g_isc.op = OP_REPL_LOOP;
+    for (;;) {
+        if (g_opcodes[g_isc.op].func(&g_isc, g_isc.op) < 0)
+            break;
     }
 }
 
 int main(int argc, char *argv[])
 {
     isc_init();
+
+    isc_repl();
+    return 0;
 }
 

@@ -59,24 +59,38 @@ struct _Cell {
     Cell *next;
 };
 
+struct _Conti {
+    int op;
+    Cell *args;
+    Cell *envir;
+    Cell *code;
+    Conti *conti;
+};
+
 struct _IScheme {
     int lastSeg;
     int freeCellCount;
     Cell *segs[SEGS_NUM];
     Cell *freeCells;
-    Cell *envir;
+    Cell *globalEnvir;
     Cell *symbols;
-    //Cell *syntax;
+
+    int op;
+    Cell *args;
+    Cell *envir;
+    Cell *code;
+    Cell *retValue;
+    Conti *conti;
 };
 
-static Cell* op_func(IScheme *isc, Cell *c);
+static Cell* op_func(IScheme*, int);
 enum Op {
     #define _OPCODE(f, n, t, o) o,
     #include "opcodes.h"
     #undef _OPCODE
     OP_MAX
 };
-typedef Cell* (*OpFunc)(IScheme*, Cell*);
+typedef Cell* (*OpFunc)(IScheme*, int);
 typedef struct _OpCode OpCode;
 struct _OpCode {
     OpFunc func;

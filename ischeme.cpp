@@ -23,6 +23,8 @@ typedef const char*     String;
 typedef const char*     Symbol;
 typedef struct _Cell    Cell;
 typedef struct _Number  Number;
+//typedef struct _Conti   Conti;
+typedef struct _Port    Port;
 typedef struct _Conti   Conti;
 typedef struct _IScheme IScheme;
 
@@ -32,7 +34,22 @@ typedef struct _IScheme IScheme;
 #define SEG_CELLS_NUM     5000
 #define SEG_MEM_SIZE      (SEG_CELLS_NUM * sizeof(Cell))
 
-enum Type {SYNTAX=1, CHAR, BOOLEAN, NUMBER, STRING, SYMBOL, CONS, VECTOR, EXPR, LAMBDA, PROC, MACRO, CONTI};
+enum Type {SYNTAX=1, CHAR, BOOLEAN, NUMBER, STRING, SYMBOL, CONS, VECTOR, PORT, EXPR, LAMBDA, PROC, MACRO, CONTI};
+enum PortType {
+    PORT_FREE   = 0,
+    PORT_INPUT  = 1,
+    PORT_OUTPUT = 2,
+    PORT_FILE   = 4,
+    PORT_STRING = 8,
+    PORT_EOF    = 32,
+};
+
+enum Op {
+    #define _OPCODE(f, n, t, o) o,
+    #include "opcodes.h"
+    #undef _OPCODE
+    OP_MAX
+};
 
 struct _Number {
     Boolean fixed;
@@ -40,6 +57,28 @@ struct _Number {
         long l;
         double d;
     };
+};
+
+struct _Port {
+    int t;
+    union {
+        struct {
+            FILE *file;
+            char *name;
+        } f;
+        struct {
+          char *start;
+          char *end;
+          char *cur;
+        } s;
+    };
+};
+
+struct _Conti {
+    Op op;
+    Cell *args;
+    Cell *envir;
+    Cell *code;
 };
 
 struct _Cell {
@@ -51,20 +90,10 @@ struct _Cell {
             Cell *a;
             Cell *d;
         } cons;
-        struct {
-            Cell *a;
-            Cell *e;
-        } lambda;
+        Port *port;
+        Conti *conti;
+        Cell *next;
     };
-    Cell *next;
-};
-
-struct _Conti {
-    int op;
-    Cell *args;
-    Cell *envir;
-    Cell *code;
-    Conti *conti;
 };
 
 struct _IScheme {
@@ -74,22 +103,19 @@ struct _IScheme {
     Cell *freeCells;
     Cell *globalEnvir;
     Cell *symbols;
+    Cell *inPort;
+    Cell *outPort;
 
-    int op;
+    Op op;
     Cell *args;
     Cell *envir;
     Cell *code;
-    Cell *retValue;
-    Conti *conti;
+    //Cell *retValue;
+    Cell *conti;
 };
 
 static Cell* op_func(IScheme*, int);
-enum Op {
-    #define _OPCODE(f, n, t, o) o,
-    #include "opcodes.h"
-    #undef _OPCODE
-    OP_MAX
-};
+
 typedef Cell* (*OpFunc)(IScheme*, int);
 typedef struct _OpCode OpCode;
 struct _OpCode {
@@ -140,7 +166,6 @@ static Cell *cell_alloc()//Cell *args, Cell *env)
             return NULL;
         }
     }
-
     Cell *c = g_isc.freeCells;
     g_isc.freeCells = c->next;
     g_isc.freeCellCount--;
@@ -209,16 +234,36 @@ static Cell *mkLambda(Cell *a, Cell *e)
     Cell *c = cell_alloc();
     if (c) {
         c->t = LAMBDA;
-        c->lambda.a = a;
-        c->lambda.e = e;
+        c->cons.a = a;
+        c->cons.d = e;
     }
     return c;
 }
 
-static Boolean isCons(Cell *c) { return c && c->t == CONS; }
+static Cell *mkConti(IScheme *isc, Op op, Cell *args, Cell *code)
+{
+    Cell *c = cell_alloc();
+    if (c) {
+        c->t = CONTI;
+        c->conti = (Conti*)malloc(sizeof(Conti));
+        if (c->conti) {
+            c->conti->op = op;
+            c->conti->args = args;
+            c->conti->envir = isc->envir;
+            c->conti->code = code;
+        } else {
+            IError("no memory.");
+            return NULL;
+        }
+    }
+    isc->conti = cons(c, isc->conti);
+    return c;
+}
+
+static Boolean isCons(Cell *c)      { return c && c->t == CONS; }
 static Boolean isSymbol(Cell *c)	{ return c && c->t == SYMBOL; }
 
-static String symbol(Cell *c) { return isSymbol(c) ? c->str: NULL; }
+static String symbol(Cell *c)       { return isSymbol(c) ? c->str: NULL; }
 
 static Cell *car(Cell *c)        { return isCons(c) ? c->cons.a : NULL; }
 static Cell *cdr(Cell *c)        { return isCons(c) ? c->cons.d : NULL; }
@@ -232,9 +277,43 @@ static Cell *rplacd(Cell *c, Cell *d)    { return isCons(c) ? c->cons.d = d : NU
 
 
 /***************** repl loop ******************/
+static inline int getChar(IScheme *isc) {
+    Port *p = isc->inPort->port;
+    if (p->t & PORT_EOF) return EOF;
+    int c = 0;
+    if (p->t & PORT_FILE) {
+        c = fgetc(p->f.file);
+    } else {
+        if (p->s.cur == 0 || p->s.cur == p->s.end)
+            c == EOF;
+        else
+            c = *p->s.cur++;
+    }
 
-static Cell* op_func(IScheme *isc, int op)
+    if (c == EOF) p->t |= PORT_EOF;
+    return c;
+}
+
+#define gotoOp(sc, o)      {sc->op=o; goto Begin;}
+static Cell *op_func(IScheme *isc, int op)
 {
+Begin:
+    switch (op) {
+    case OP_LOAD:
+        break;
+    case OP_REPL_LOOP:
+        mkConti(isc, OP_REPL_LOOP, isc->args, isc->envir);
+        mkConti(isc, OP_REPL_PRINT, isc->args, isc->envir);
+        mkConti(isc, OP_REPL_EVAL, isc->args, isc->envir);
+        gotoOp(isc, OP_REPL_READ);
+    case OP_REPL_READ:
+
+        break;
+    case OP_REPL_EVAL:
+        break;
+    case OP_REPL_PRINT:
+        break;
+    }
     return 0;
 }
 
@@ -300,7 +379,7 @@ static void isc_init()
 
 static void isc_repl()
 {
-    //g_isc.op = OP_REPL_LOOP;
+    g_isc.op = OP_REPL_LOOP;
     for (;;) {
         if (g_opcodes[g_isc.op].func(&g_isc, g_isc.op) < 0)
             break;

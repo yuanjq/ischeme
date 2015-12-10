@@ -3,7 +3,11 @@
 #include <string.h>
 #include "ischeme.h"
 
-#define DELIMITERS  "()[]{}\";\f\t\v\n\r "
+#define CELL_TRUE    &g_true;
+#define CELL_FALSE   &g_false;
+#define CELL_NIL     &g_nil;
+#define DELIMITERS   "()[]{}\";\f\t\v\n\r "
+
 static IScheme g_isc = {0};
 static Cell* op_func(IScheme*, int);
 static OpCode g_opcodes[] = {
@@ -12,7 +16,11 @@ static OpCode g_opcodes[] = {
     #undef _OPCODE
     {0}
 };
+
 static Reader g_readers[256];
+static Cell g_true;
+static Cell g_false;
+static Cell g_nil;
 
 static void gc(IScheme *isc);//, Cell *args, Cell *env);
 
@@ -73,7 +81,7 @@ static Cell *cons(Cell *a, Cell *d) {
     return c;
 }
 
-static Cell *mkLong(long n)
+static Cell *mk_long(long n)
 {
     Cell *c = cell_alloc();
     if (c) {
@@ -84,7 +92,7 @@ static Cell *mkLong(long n)
     return c;
 }
 
-static Cell *mkDouble(double n)
+static Cell *mk_double(double n)
 {
     Cell *c = cell_alloc();
     if (c) {
@@ -95,13 +103,13 @@ static Cell *mkDouble(double n)
     return c;
 }
 
-static Cell *mkNumber(Number n)
+static Cell *mk_number(Number n)
 {
-    if (n.fixed) return mkLong(n.l);
-    else return mkDouble(n.d);
+    if (n.fixed) return mk_long(n.l);
+    else return mk_double(n.d);
 }
 
-static Cell *mkSymbol(String s)
+static Cell *mk_symbol(String s)
 {
     Cell *c = cell_alloc();
     if (c) {
@@ -111,7 +119,7 @@ static Cell *mkSymbol(String s)
     return c;
 }
 
-static Cell *mkLambda(Cell *a, Cell *e)
+static Cell *mk_lambda(Cell *a, Cell *e)
 {
     Cell *c = cell_alloc();
     if (c) {
@@ -122,7 +130,7 @@ static Cell *mkLambda(Cell *a, Cell *e)
     return c;
 }
 
-static Cell *mkPort(FILE *f, String name)
+static Cell *mk_port(FILE *f, String name)
 {
     Cell *c = cell_alloc();
     if (c) {
@@ -140,7 +148,7 @@ static Cell *mkPort(FILE *f, String name)
     return c;
 }
 
-static Cell *mkConti(IScheme *isc, Op op, Cell *args, Cell *code)
+static Cell *mk_conti(IScheme *isc, Op op, Cell *args, Cell *code)
 {
     Cell *c = cell_alloc();
     if (c) {
@@ -160,27 +168,27 @@ static Cell *mkConti(IScheme *isc, Op op, Cell *args, Cell *code)
     return c;
 }
 
-static Boolean isPair(Cell *c)      { return c && c->t == PAIR; }
-static Boolean isSymbol(Cell *c)	{ return c && c->t == SYMBOL; }
-static Boolean isPort(Cell *)       { return c && c->t == PORT; }
+static Boolean is_pair(Cell *c)     { return c && c->t == PAIR; }
+static Boolean is_symbol(Cell *c)	{ return c && c->t == SYMBOL; }
+static Boolean is_port(Cell *)      { return c && c->t == PORT; }
 
-static String symbol(Cell *c)       { return isSymbol(c) ? c->str: NULL; }
-static Port* port(Cell *c)          { return isPort(c) ? c->port : NULL; }
+static String symbol(Cell *c)       { return is_symbol(c) ? c->str: NULL; }
+static Port* port(Cell *c)          { return is_port(c) ? c->port : NULL; }
 
-static Cell *car(Cell *c)        { return isPair(c) ? c->pair.a : NULL; }
-static Cell *cdr(Cell *c)        { return isPair(c) ? c->pair.d : NULL; }
+static Cell *car(Cell *c)        { return is_pair(c) ? c->pair.a : NULL; }
+static Cell *cdr(Cell *c)        { return is_pair(c) ? c->pair.d : NULL; }
 static Cell *caar(Cell *c)       { return car(car(c)); }
 static Cell *cadr(Cell *c)       { return car(cdr(c)); }
 static Cell *cdar(Cell *c)       { return cdr(car(c)); }
 static Cell *cddr(Cell *c)       { return cdr(cdr(c)); }
 
-static Cell *rplaca(Cell *c, Cell *a)    { return isPair(c) ? c->pair.a = a : NULL; }
-static Cell *rplacd(Cell *c, Cell *d)    { return isPair(c) ? c->pair.d = d : NULL; }
+static Cell *rplaca(Cell *c, Cell *a)    { return is_pair(c) ? c->pair.a = a : NULL; }
+static Cell *rplacd(Cell *c, Cell *d)    { return is_pair(c) ? c->pair.d = d : NULL; }
 
 
 /***************** repl loop ******************/
-static inline int getChar(Cell *in) {
-    //if (!isPort(in)) return EOF;
+static inline int get_char(Cell *in) {
+    //if (!is_port(in)) return EOF;
     Port *p = in->port;
     if (p->t & PORT_EOF) return EOF;
     int c = 0;
@@ -197,8 +205,8 @@ static inline int getChar(Cell *in) {
     return c;
 }
 
-static inline void ungetChar(Cell *out, int c) {
-    //if (!isPort(out)) return;
+static inline void unget_char(Cell *out, int c) {
+    //if (!is_port(out)) return;
     Port *p = out->port;
     if (c == EOF) return;
     if (p->t & PORT_FILE) {
@@ -216,9 +224,9 @@ Loop:
     case OP_LOAD:
         break;
     case OP_REPL_LOOP:
-        mkConti(isc, OP_REPL_LOOP, isc->args, isc->envir);
-        mkConti(isc, OP_REPL_PRINT, isc->args, isc->envir);
-        mkConti(isc, OP_REPL_EVAL, isc->args, isc->envir);
+        mk_conti(isc, OP_REPL_LOOP, isc->args, isc->envir);
+        mk_conti(isc, OP_REPL_PRINT, isc->args, isc->envir);
+        mk_conti(isc, OP_REPL_EVAL, isc->args, isc->envir);
         gotoOp(isc, OP_REPL_READ);
     case OP_REPL_READ:
 
@@ -231,7 +239,7 @@ Loop:
     return 0;
 }
 
-static Cell *findSymbol(IScheme *isc, String s)
+static Cell *find_symbol(IScheme *isc, String s)
 {
     for (Cell *c = isc->symbols; c; c = cdr(c)) {
         String sym = symbol(car(c));
@@ -244,8 +252,8 @@ static Cell *findSymbol(IScheme *isc, String s)
 static Cell* internal(IScheme *isc, String s)
 {
     Cell *c = NULL;
-    if ((c = findSymbol(isc, s))) return c;
-    c = mkSymbol(s);
+    if ((c = find_symbol(isc, s))) return c;
+    c = mk_symbol(s);
     isc->symbols = cons(c, isc->symbols);
     return c;
 }
@@ -256,7 +264,7 @@ static void new_syntax(IScheme *isc, String s)
     c->t = SYNTAX;
 }
 
-static Cell *findEnvir(IScheme *isc, Cell *s)
+static Cell *find_envir(IScheme *isc, Cell *s)
 {
     for (Cell *e = isc->globalEnvir; e; e = cdr(isc->globalEnvir)) {
         if (isCons(car(e)) && caar(e) == s)
@@ -268,34 +276,34 @@ static Cell *findEnvir(IScheme *isc, Cell *s)
 static void new_envir(IScheme *isc, Cell *s, Cell *v)
 {
     Cell *e;
-    if ((e = findEnvir(isc, s))) {
+    if ((e = find_envir(isc, s))) {
         rplacd(e, v);
     } else {
         isc->globalEnvir = cons(e, isc->globalEnvir);
     }
 }
 
-static Cell *readIllegal(IScheme *isc, int c)
+static Cell *read_illegal(IScheme *isc, int c)
 {
     return (Cell*)-1;
 }
 
-static Cell *readBlank(IScheme *isc, int c)
+static Cell *read_blank(IScheme *isc, int c)
 {
     return NULL;
 }
 
-static inline String readUpto(IScheme *isc, String s)
+static inline String read_upto(IScheme *isc, String s)
 {
     char *p = isc->inBuff;
     while ((p - isc->inBuff < sizeof(isc->inBuff)) &&
-           !strchr(s, (*p++ = getChar(isc->inPort))));
-    ungetChar(isc, *--p);
+           !strchr(s, (*p++ = get_char(isc->inPort))));
+    unget_char(isc, *--p);
     *p = '\0';
     return isc->inBuff;
 }
 
-static Boolean startWith(String s, String w)
+static Boolean start_with(String s, String w)
 {
     char *p1, p2;
     p1 = s; p2 = w;
@@ -306,10 +314,10 @@ static Boolean startWith(String s, String w)
         return FALSE;
 }
 
-static Cell *readAlpha(IScheme *isc, int c)
+static Cell *read_alpha(IScheme *isc, int c)
 {
-    ungetChar(isc->inPort, c);
-    char *str = readUpto(isc, DELIMITERS);
+    unget_char(isc->inPort, c);
+    char *str = read_upto(isc, DELIMITERS);
     char *p = str;
 
     Exactness exactness = NO_EXACTNESS;
@@ -318,36 +326,36 @@ static Cell *readAlpha(IScheme *isc, int c)
         switch (*++p) {
         case 'b': case 'B':
             if (radix != NO_RADIX)
-                return RET_FAILED;
+                return CELL_NIL;
             radix = BIN;
             break;
         case 'o': case 'O':
             if (radix != NO_RADIX)
-                return RET_FAILED;
+                return CELL_NIL;
             radix = OCT;
             break;
         case 'd': case 'D':
             if (radix != NO_RADIX)
-                return RET_FAILED;
+                return CELL_NIL;
             radix = DEC;
             break;
         case 'x': case 'X':
             if (radix != NO_RADIX)
-                return RET_FAILED;
+                return CELL_NIL;
             radix = HEX;
             break;
         case 'e': case 'E':
             if (exactnes != NO_EXACTNESS)
-                return RET_FAILED;
+                return CELL_NIL;
             exactness = EXACT;
             break;
         case 'i': case 'I':
             if (exactnes != NO_EXACTNESS)
-                return RET_FAILED;
+                return CELL_NIL;
             exactness = INEXACT;
             break;
         default:
-            return RET_FAILED;
+            return CELL_NIL;
         }
         ++p;
     }
@@ -359,24 +367,24 @@ static Cell *readAlpha(IScheme *isc, int c)
     //int sign =
 }
 #if 0
-static Cell *readAlpha(IScheme *isc, int c)
+static Cell *read_alpha(IScheme *isc, int c)
 {
     char buf[1024];
     int idx = 0;
     buf[idx++] = c;
-    while ((c = getc(in)) > 0 && (readAlpha == _readers[c] || readNumber == _readers[c] || readSign == _readers[c]))
+    while ((c = getc(in)) > 0 && (read_alpha == _readers[c] || read_number == _readers[c] || read_sign == _readers[c]))
         buf[idx++] = c;
     ungetc(c, in);
     buf[idx] = '\0';
-    return mkSymbol(buf);
+    return mk_symbol(buf);
 }
 #endif
-static Cell *readHash(IScheme *isc, int c)
+static Cell *read_hash(IScheme *isc, int c)
 {
 
 }
 
-static Cell *readString(IScheme *isc, int c)
+static Cell *read_string(IScheme *isc, int c)
 {
     char buf[1024];
     int idx = 0;
@@ -396,14 +404,14 @@ static Cell *readString(IScheme *isc, int c)
     return mkString(strdup(buf));
 }
 
-static Cell *readSign(IScheme *isc, int c)
+static Cell *read_sign(IScheme *isc, int c)
 {
     int d = getc(in);
     ungetc(d, in);
-    return (d > 0 && _readers[d] == readNumber) ? readNumber(c, in) : readAlpha(c, in);
+    return (d > 0 && _readers[d] == read_number) ? read_number(c, in) : read_alpha(c, in);
 }
 
-static Cell *readQuote(IScheme *isc, int c)
+static Cell *read_quote(IScheme *isc, int c)
 {
     Cell *cell = readFile(in);
     cell = cons(cell, 0);
@@ -411,17 +419,17 @@ static Cell *readQuote(IScheme *isc, int c)
     return cell;
 }
 
-static Cell *readQuasiquote(IScheme *isc, int c)
+static Cell *read_quasiquote(IScheme *isc, int c)
 {
     return 0;
 }
 
-static Cell *readUnquote(IScheme *isc, int c)
+static Cell *read_unquote(IScheme *isc, int c)
 {
     return 0;
 }
 
-static Cell *readList(IScheme *isc, int c)
+static Cell *read_list(IScheme *isc, int c)
 {
     Cell *head, *tail, *cell = 0;
     head = tail = cons(0, 0);
@@ -459,13 +467,13 @@ static Cell *readList(IScheme *isc, int c)
     return head;
 }
 
-static Cell *readSemi(IScheme *isc, int c)
+static Cell *read_semi(IScheme *isc, int c)
 {
     while ((c = getc(in)) && c != '\n' && c != '\r');
     return 0;
 }
 
-static void initReaders(Reader r, char *chrs)
+static void init_readers(Reader r, char *chrs)
 {
     while (*chrs) g_readers[*chrs++] = r;
 }
@@ -478,29 +486,29 @@ static void isc_init(FILE *in, String name)
     g_isc.globalEnvir = NULL;
     seg_alloc(&g_isc, 3);
 
-    g_isc.inPort = mkPort(in, name);
-    g_isc.outPort = mkPort(stdout, NULL);
+    g_isc.inPort = mk_port(in, name);
+    g_isc.outPort = mk_port(stdout, NULL);
 
-    for (int i = 0;  i < 256;  i++) g_readers[i]= readIllegal;
-    initReaders(readBlank,  " \t\n\v\f\r");
-    initReaders(readAlpha,  "0123456789");
-    initReaders(readAlpha,  "abcdefghijklmnopqrstuvwxyz");
-    initReaders(readAlpha,  "ABCDEFGHIJKLMNOPQRSTUVWXYZ");
-    initReaders(readAlpha,  "!#$%&*/:<=>?@\\^_|~");
-    initReaders(readAlpha,  ".");
-    initReaders(readHash,   "#");
-    initReaders(readSign,   "+-");
-    initReaders(readString, "\"");
-    initReaders(readQuote,  "'");
-    initReaders(readQuasiquote, "`");
-    initReaders(readUnquote, ",");
-    initReaders(readList,   "([{");
-    initReaders(readSemi,   ";");
+    for (int i = 0;  i < 256;  i++) g_readers[i]= read_illegal;
+    init_readers(read_blank,  " \t\n\v\f\r");
+    init_readers(read_alpha,  "0123456789");
+    init_readers(read_alpha,  "abcdefghijklmnopqrstuvwxyz");
+    init_readers(read_alpha,  "ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    init_readers(read_alpha,  "!#$%&*/:<=>?@\\^_|~");
+    init_readers(read_alpha,  ".");
+    init_readers(read_hash,   "#");
+    init_readers(read_sign,   "+-");
+    init_readers(read_string, "\"");
+    init_readers(read_quote,  "'");
+    init_readers(read_quasiquote, "`");
+    init_readers(read_unquote, ",");
+    init_readers(read_list,   "([{");
+    init_readers(read_semi,   ";");
 
     for (int i = 0; i < sizeof(g_opcodes)/sizeof(OpCode); i++) {
         if (g_opcodes[i].name) {
             if (g_opcodes[i].t == SYNTAX) new_syntax(&g_isc, g_opcodes[i].name);
-            new_envir(&g_isc, internal(&g_isc, g_opcodes[i].name), mkLong(i));
+            new_envir(&g_isc, internal(&g_isc, g_opcodes[i].name), mk_long(i));
         }
     }
 }

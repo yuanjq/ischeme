@@ -135,7 +135,7 @@ struct _Conti {
 };
 
 struct _Cell {
-    Type t;
+    int t;
     union {
         Char chr;
         Number num;

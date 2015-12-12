@@ -15,18 +15,18 @@
 #define ITraceLeave()
 #endif
 
+typedef unsigned char   bool;
 typedef unsigned char   uint8;
 typedef unsigned int    Char;
-typedef unsigned char   Boolean;
 typedef const char*     String;
 typedef const char*     Symbol;
 
-typedef struct _Cell    Cell;
-typedef struct _Char    Char;
 typedef struct _Number  Number;
+typedef struct _Pair    Pair;
 typedef struct _Port    Port;
 typedef struct _Conti   Conti;
-typedef struct _OpCode OpCode;
+typedef struct _Cell    Cell;
+typedef struct _OpCode  OpCode;
 typedef struct _IScheme IScheme;
 
 typedef Cell* (*OpFunc)(IScheme*, int);
@@ -44,37 +44,38 @@ enum Ret {
 };
 
 enum Type {
-    SYNTAX=1,
+    FREE = 0,
     CHAR,
-    BOOLEAN,
+    BOOL,
     NUMBER,
     STRING,
     SYMBOL,
-    LIST,
+    SYNTAX,
     PAIR,
+    LIST,
     VECTOR,
     PORT,
     EXPR,
     LAMBDA,
     PROC,
     MACRO,
-    CONTI
+    CONTI,
 };
 
 enum PortType {
     PORT_FREE   = 0,
-    PORT_INPUT  = 1,
-    PORT_OUTPUT = 2,
-    PORT_FILE   = 4,
-    PORT_STRING = 8,
-    PORT_EOF    = 32,
+    PORT_INPUT  = 1<<1,
+    PORT_OUTPUT = 1<<2,
+    PORT_ERROR  = 1<<3,
+    PORT_FILE   = 1<<4,
+    PORT_STRING = 1<<5,
+    PORT_EOF    = 1<<6,
 };
 
 enum NumberType {
-    NUMBER_INTEGER,
+    NUMBER_LONG,
+    NUMBER_DOUBLE,
     NUMBER_FRACTION,
-    NUMBER_RATIONAL,
-    NUMBER_REAL,
     NUMBER_COMPLEX,
 };
 
@@ -89,7 +90,7 @@ enum Radix {
     BIN = 2,
     OCT = 8,
     DEC = 10,
-    HEX
+    HEX = 16
 };
 
 enum Op {
@@ -99,16 +100,19 @@ enum Op {
     OP_MAX
 };
 
-struct _Char {
-
-};
-
 struct _Number {
     uint8 t;
     union {
-        long i;
-        double r;
-
+        long l;
+        double d;
+        struct {
+            Number *nr;
+            Number *dr;
+        } fn;
+        struct {
+            Number *rl;
+            Number *im;
+        } cx;
     };
 };
 
@@ -134,19 +138,21 @@ struct _Conti {
     Cell *code;
 };
 
+struct _Pair{
+    Cell *a;
+    Cell *d;
+};
+
 struct _Cell {
     int t;
     union {
-        Char chr;
-        Number num;
-        String str;
-        struct {
-            Cell *a;
-            Cell *d;
-        } pair;
-        Port *port;
-        Conti *conti;
-        Cell *next;
+        Char    chr;
+        String  str;
+        Number  *num;
+        Pair    *pair;
+        Port    *port;
+        Conti   *conti;
+        Cell    *next;
     };
 };
 

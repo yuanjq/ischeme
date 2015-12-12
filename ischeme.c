@@ -1,11 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include "ischeme.h"
 
 #define CELL_TRUE    &g_true;
 #define CELL_FALSE   &g_false;
-#define CELL_NIL     &g_nil;
 #define DELIMITERS   "()[]{}\";\f\t\v\n\r "
 
 static IScheme g_isc = {0};
@@ -72,33 +72,57 @@ static void gc(IScheme *isc)//, Cell *args, Cell *env)
 
 /*************** syntax **************/
 static Cell *cons(Cell *a, Cell *d) {
+    Cell *c = NULL;
+    Pair *pair = malloc(sizeof(Pair));
+    if (pair) {
+        c = cell_alloc();
+        if (c) {
+            c->t = PAIR;
+            c->pair = pair;
+            pair->a = a;
+            pair->d = d;
+        }
+    }
+    return c;
+}
+
+static Cell *mk_char(Char chr) {
     Cell *c = cell_alloc();
     if (c) {
-        c->t = PAIR;
-        c->pair.a = a;
-        c->pair.d = d;
+        c->t = CHAR;
+        c->chr = chr;
     }
     return c;
 }
 
 static Cell *mk_long(long n)
 {
-    Cell *c = cell_alloc();
-    if (c) {
-        c->t = NUMBER;
-        c->num.fixed = TRUE;
-        c->num.l = n;
+    Cell *c = NULL;
+    Number *num = malloc(sizeof(Number));
+    if (num) {
+        c = cell_alloc();
+        if (c) {
+            c->t = NUMBER;
+            c->num = num;
+            c->num->t = NUMBER_LONG;
+            c->num->l = n;
+        }
     }
     return c;
 }
 
 static Cell *mk_double(double n)
 {
-    Cell *c = cell_alloc();
-    if (c) {
-        c->t = NUMBER;
-        c->num.fixed = TRUE;
-        c->num.d = n;
+    Cell *c = NULL;
+    Number *num = malloc(sizeof(Number));
+    if (num) {
+        c = cell_alloc();
+        if (c) {
+            c->t = NUMBER;
+            c->num = num;
+            num->t = NUMBER_DOUBLE;
+            num->d = n;
+        }
     }
     return c;
 }
@@ -121,28 +145,32 @@ static Cell *mk_symbol(String s)
 
 static Cell *mk_lambda(Cell *a, Cell *e)
 {
-    Cell *c = cell_alloc();
-    if (c) {
-        c->t = LAMBDA;
-        c->pair.a = a;
-        c->pair.d = e;
+    Cell *c = NULL;
+    Pair *pair = malloc(sizeof(Pair));
+    if (pair) {
+        c = cell_alloc();
+        if (c) {
+            c->t = LAMBDA;
+            c->pair = pair;
+            pair->a = a;
+            pair->d = e;
+        }
     }
     return c;
 }
 
 static Cell *mk_port(FILE *f, String name)
 {
-    Cell *c = cell_alloc();
-    if (c) {
-        c->t = PORT;
-        c->port = (Port*)malloc(sizeof(Port));
-        if (c->port) {
-            c->port->t = PORT_FILE;
-            c->port->f.file = f;
-            c->port->f.name = strdup(name);
-        } else {
-            IError("no memory.");
-            return NULL;
+    Cell *c = NULL;
+    Port *port = (Port*)malloc(sizeof(Port));
+    if (port) {
+        c = cell_alloc();
+        if (c) {
+            c->t = PORT;
+            c->port = port;
+            port->t = PORT_FILE;
+            port->f.file = f;
+            port->f.name = strdup(name);
         }
     }
     return c;
@@ -150,30 +178,28 @@ static Cell *mk_port(FILE *f, String name)
 
 static Cell *mk_conti(IScheme *isc, Op op, Cell *args, Cell *code)
 {
-    Cell *c = cell_alloc();
-    if (c) {
-        c->t = CONTI;
-        c->conti = (Conti*)malloc(sizeof(Conti));
-        if (c->conti) {
+    Cell *c = NULL;
+    Conti *conti = (Conti*)malloc(sizeof(Conti));
+    if (conti) {
+        c = cell_alloc();
+        if (c) {
+            c->t = CONTI;
             c->conti->op = op;
             c->conti->args = args;
             c->conti->envir = isc->envir;
             c->conti->code = code;
-        } else {
-            IError("no memory.");
-            return NULL;
         }
+        isc->conti = cons(c, isc->conti);
     }
-    isc->conti = cons(c, isc->conti);
     return c;
 }
 
-static Boolean is_pair(Cell *c)     { return c && c->t == PAIR; }
-static Boolean is_symbol(Cell *c)	{ return c && c->t == SYMBOL; }
-static Boolean is_port(Cell *)      { return c && c->t == PORT; }
+static bool is_pair(Cell *c)     { return c && c->t == PAIR; }
+static bool is_symbol(Cell *c)	 { return c && c->t == SYMBOL; }
+static bool is_port(Cell *)      { return c && c->t == PORT; }
 
-static String symbol(Cell *c)       { return is_symbol(c) ? c->str: NULL; }
-static Port* port(Cell *c)          { return is_port(c) ? c->port : NULL; }
+static String symbol(Cell *c)    { return is_symbol(c) ? c->str: NULL; }
+static Port* port(Cell *c)       { return is_port(c) ? c->port : NULL; }
 
 static Cell *car(Cell *c)        { return is_pair(c) ? c->pair.a : NULL; }
 static Cell *cdr(Cell *c)        { return is_pair(c) ? c->pair.d : NULL; }
@@ -188,7 +214,6 @@ static Cell *rplacd(Cell *c, Cell *d)    { return is_pair(c) ? c->pair.d = d : N
 
 /***************** repl loop ******************/
 static inline int get_char(Cell *in) {
-    //if (!is_port(in)) return EOF;
     Port *p = in->port;
     if (p->t & PORT_EOF) return EOF;
     int c = 0;
@@ -200,13 +225,11 @@ static inline int get_char(Cell *in) {
         else
             c = *p->s.cur++;
     }
-
     if (c == EOF) p->t |= PORT_EOF;
     return c;
 }
 
 static inline void unget_char(Cell *out, int c) {
-    //if (!is_port(out)) return;
     Port *p = out->port;
     if (c == EOF) return;
     if (p->t & PORT_FILE) {
@@ -293,17 +316,34 @@ static Cell *read_blank(IScheme *isc, int c)
     return NULL;
 }
 
-static inline String read_upto(IScheme *isc, String s)
+static inline int read_upto(Cell *port, char *upto, char *out, int size)
 {
-    char *p = isc->inBuff;
-    while ((p - isc->inBuff < sizeof(isc->inBuff)) &&
-           !strchr(s, (*p++ = get_char(isc->inPort))));
-    unget_char(isc, *--p);
+    if (!is_port(port) || out || size <= 0)
+        return -1;
+    int c;
+    char *p = out;
+
+    for (;;) {
+        if (p - out < size - 1) {
+            if ((c = get_char(port)) < 0) {
+                IError("end of file.");
+                return -1;
+            }
+            if (strchr(upto, c))
+                break;
+            *p++ = c;
+        } else {
+            *p = '\0';
+            IError("symbol name too loog.");
+            return -1;
+        }
+    }
+    unget_char(port, c);
     *p = '\0';
-    return isc->inBuff;
+    return p - in;
 }
 
-static Boolean start_with(String s, String w)
+static bool start_with(String s, String w)
 {
     char *p1, p2;
     p1 = s; p2 = w;
@@ -314,57 +354,202 @@ static Boolean start_with(String s, String w)
         return FALSE;
 }
 
+static double xtod(char num[], int radix)
+{
+    double dnum = 0;
+    int i, j, k=-1, n=0;
+
+    for (i=0;; i++)
+    {
+        if (num[i] == '\0')
+            break;
+        if (num[i] == '.')
+        {
+            j=i;
+            ++k;
+            continue;
+        }
+        if (k >= 0)
+            ++k;
+    }
+
+    j = k>=0 ? j : i;
+    for(i = j-1; i >= 0; i--)
+    {
+        if (num[j-i-1] >= 'a' && num[j-i-1] <= 'f') {
+            n = num[j-i-1] - 'a' + 10;
+        } else if (num[j-i-1] >= 'A' && num[j-i-1] <= 'F') {
+            n = num[j-i-1] - 'A' + 10;
+        } else  if (num[j-i-1] >= '0' && num[j-i-1] <= '9') {
+            n = num[j-i-1] - '0';
+        }
+        dnum += n * pow(radix, i);
+    }
+
+    if(k >= 0)
+    {
+        for(i=0; i<k; i++)
+        {
+            if (num[i+j+1] >= 'a' && num[i+j+1] <= 'f') {
+                n = num[i+j+1] - 'a' + 10;
+            } else if (num[i+j+1] >= 'A' && num[i+j+1] <= 'F') {
+                n = num[i+j+1] - 'A' + 10;
+            } else  if (num[i+j+1] >= '0' && num[i+j+1] <= '9') {
+                n = num[i+j+1] - '0';
+            }
+            dnum += n * pow(radix, -i-1);
+        }
+    }
+    return dnum;
+}
+
 static Cell *read_alpha(IScheme *isc, int c)
 {
     unget_char(isc->inPort, c);
-    char *str = read_upto(isc, DELIMITERS);
-    char *p = str;
+    char *p = isc->inBuff;
+    int totalLen = read_upto(isc->inPort, p, DELIMITERS);
 
     Exactness exactness = NO_EXACTNESS;
     Radix radix = NO_RADIX;
-    while (*p == '#') {
-        switch (*++p) {
+    char *pEnd = p + totalLen;
+    while (p < pEnd && *p == '#') {
+        if (p + 2 > pEnd)
+            goto Error0;
+        switch (p[1]) {
         case 'b': case 'B':
             if (radix != NO_RADIX)
-                return CELL_NIL;
+                goto Error0;
             radix = BIN;
             break;
         case 'o': case 'O':
             if (radix != NO_RADIX)
-                return CELL_NIL;
+                goto Error0;
             radix = OCT;
             break;
         case 'd': case 'D':
             if (radix != NO_RADIX)
-                return CELL_NIL;
+                goto Error0;
             radix = DEC;
             break;
         case 'x': case 'X':
             if (radix != NO_RADIX)
-                return CELL_NIL;
+                goto Error0;
             radix = HEX;
             break;
         case 'e': case 'E':
             if (exactnes != NO_EXACTNESS)
-                return CELL_NIL;
+                goto Error0;
             exactness = EXACT;
             break;
         case 'i': case 'I':
             if (exactnes != NO_EXACTNESS)
-                return CELL_NIL;
+                goto Error0;
             exactness = INEXACT;
             break;
+        case 'f': case 'F':
+            if (exactnes != NO_EXACTNESS || radix != NO_RADIX || p + 2 != pEnd)
+                goto Error0;
+            return CELL_FALSE;
+        case 't': case "T":
+            if (exactnes != NO_EXACTNESS || radix != NO_RADIX || p + 2 != pEnd)
+                goto Error0;
+            return CELL_TRUE;
+        case '\\':
+            if (exactnes != NO_EXACTNESS || radix != NO_RADIX || p + 3 != pEnd)
+                goto Error0;
+            return mk_char(p[2]);
         default:
-            return CELL_NIL;
+            goto Error0;
         }
+        p += 2;
+    }
+
+    int sign = 0, len = 0;
+    char *pStart = NULL;
+    bool bIsNumber = TRUE;
+    bool bFindDot = FALSE;
+    bool bFindNum = FALSE;
+
+    c = *p;
+    if (c == '+') {
+        sign = 1;
+        ++p;
+    }
+    else if (c == '-') {
+        sign = -1;
         ++p;
     }
 
-    if (radix == NO_RADIX) {
-        radix = DEC;
+    //pStart = p;
+    while (p < pEnd && (c = *p) != '\0') {
+        if (bIsNumber) {
+            if (c == '+' || c == '-') {
+
+            } else if (c == '.') {
+                if (bFindDot) {
+                    if (exactnes != NO_EXACTNESS || radix != NO_RADIX)
+                        goto Error0;
+                    else
+                        bIsNumber = FALSE;
+                }
+                bFindDot = TRUE;
+            } else if (c == '/') {
+
+            } else if (c == 'i') {
+
+            } else {
+                switch (radix) {
+                case BIN:
+                    if (!(c >= '0' && c <= '1')) {
+                        goto Error1;
+                    }
+                    break;
+                case OCT:
+                    if (!(c >= '0' && c <= '7')) {
+                        goto Error1;
+                    }
+                    break;
+                case DEC:
+                    if (!(c >= '0' && c <= '9')) {
+                        goto Error1;
+                    }
+                    break;
+                case HEX:
+                    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+                        goto Error1;
+                    }
+                    break;
+                default:
+                    if (!(c >= '0' && c <= '9')) {
+                        bIsNumber = FALSE;
+                    }
+                    break;
+                }
+            }
+        } else {
+            break;
+        }
     }
 
-    //int sign =
+    if (len > 0) {
+        xtod(pStart, len);
+    }
+    if (*p == 'i') {
+
+    } else if (*p == '/') {
+
+    } else if (*p == '+' || *p == '-') {
+
+    } else if (*p != '\0') {
+
+    } else {
+
+    }
+
+Error0:
+    return NULL;
+Error1:
+    return NULL;
 }
 #if 0
 static Cell *read_alpha(IScheme *isc, int c)

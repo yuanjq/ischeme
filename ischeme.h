@@ -37,6 +37,7 @@ typedef Cell*(*Reader)(IScheme*, int);
 #define SEGS_NUM          100
 #define SEG_CELLS_NUM     5000
 #define SEG_MEM_SIZE      (SEG_CELLS_NUM * sizeof(Cell))
+#define INTL_BUF_SIZE     1024
 
 enum Ret {
     RET_FAILED = -1,
@@ -171,7 +172,7 @@ struct _IScheme {
     Cell *envir;
     Cell *code;
     Cell *conti;
-    char inBuff[1024];
+    char inBuff[INTL_BUF_SIZE];
 };
 
 struct _OpCode {

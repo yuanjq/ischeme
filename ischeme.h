@@ -168,10 +168,11 @@ struct _IScheme {
     Cell *outPort;
 
     Op op;
+    Cell *retnv;
     Cell *args;
     Cell *envir;
     Cell *code;
-    Cell *conti;
+    Cell *contis;
     char inBuff[INTL_BUF_SIZE];
 };
 

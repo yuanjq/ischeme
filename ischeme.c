@@ -4,9 +4,12 @@
 #include <math.h>
 #include "ischeme.h"
 
-#define CELL_TRUE    &g_true;
-#define CELL_FALSE   &g_false;
-#define DELIMITERS   "()[]{}\";\f\t\v\n\r "
+#define CELL_TRUE       &g_true
+#define CELL_FALSE      &g_false
+#define CELL_NIL        &g_false
+#define CELL_EOF        (Cell*)-1
+#define DELIMITERS      "()[]{}\";\f\t\v\n\r "
+#define READERS_NUM     128
 
 static IScheme g_isc = {0};
 static Cell* op_func(IScheme*, int);
@@ -17,7 +20,7 @@ static OpCode g_opcodes[] = {
     {0}
 };
 
-static Reader g_readers[256];
+static Reader g_readers[READERS_NUM];
 static Cell g_true;
 static Cell g_false;
 //static Cell g_nil;
@@ -73,7 +76,9 @@ static void gc(IScheme *isc)//, Cell *args, Cell *env)
 /*************** syntax **************/
 static bool is_pair(Cell *c)     { return c && c->t == PAIR; }
 static bool is_symbol(Cell *c)	 { return c && c->t == SYMBOL; }
-static bool is_port(Cell *)      { return c && c->t == PORT; }
+static bool is_port(Cell *c)     { return c && c->t == PORT; }
+static bool is_conti(Cell *c)    { return c && c->t == CONTI; }
+static bool is_port_eof(Cell *c) { return c && c->t == PORT && c->port && c->port->t & PORT_EOF; }
 
 static String symbol(Cell *c)    { return is_symbol(c) ? c->str: NULL; }
 static Port* port(Cell *c)       { return is_port(c) ? c->port : NULL; }
@@ -217,7 +222,7 @@ static Cell *mk_conti(IScheme *isc, Op op, Cell *args, Cell *code)
             c->conti->envir = isc->envir;
             c->conti->code = code;
         }
-        isc->conti = cons(c, isc->conti);
+        isc->contis = cons(c, isc->contis);
     }
     return c;
 }
@@ -250,9 +255,23 @@ static inline void unget_char(Cell *out, int c) {
     }
 }
 
-#define gotoOp(sc, o)      {sc->op=o; goto Loop;}
-#define retnOp(sc, r)      {} // TODO
-static Cell *op_func(IScheme *isc, int op)
+static inline Cell *retn_helper(IScheme *isc, Cell *v) {
+    isc->retnv = v;
+    if (!is_pair(isc->contis) || !is_conti(car(isc->contis)))
+        return CELL_FALSE;
+    Conti *conti = car(isc->contis);
+    isc->op = conti->op;
+    isc->args = conti->args;
+    isc->code = conti->code;
+    isc->envir = conti->envir;
+    isc->contis = cdr(isc->contis);
+    return CELL_TRUE;
+}
+
+#define gotoOp(sc, o)      { sc->op=o; goto Loop; }
+#define retnOp(sc, r)      { return retn_helper(sc, r); }
+
+static Cell *op_func0(IScheme *isc, int op)
 {
 Loop:
     switch (op) {
@@ -266,12 +285,20 @@ Loop:
     case OP_REPL_READ:
     {
         int c;
-        while (isspace((c = get_char(isc->inPort->port))));
-        if (c < 0) return (Cell*)-1;
-        retnOp(isc, g_readers[c](isc, c));
+        Cell *ret = NULL;
+        while (ret == NULL) {
+            while (isspace((c = get_char(isc->inPort))));
+            if (c < 0 || c >= READERS_NUM) return CELL_EOF;
+            ret = g_readers[c](isc, c);
+            if (ret == CELL_EOF) return CELL_EOF;
+        }
+        retnOp(isc, ret);
     }
     case OP_REPL_EVAL:
+    {
+
         break;
+    }
     case OP_REPL_PRINT:
         break;
     }
@@ -697,7 +724,7 @@ static Cell *read_hash(IScheme *isc, int c)
 static Cell *read_string(IScheme *isc, int q)
 {
     char *buf = isc->inBuff;
-    Port *port = isc->inPort->port;
+    Cell *port = isc->inPort;
     int idx = 0;
     int c;
     while (idx < INTL_BUF_SIZE && (c = get_char(port)) > 0 && c != q)
@@ -742,8 +769,8 @@ static Cell *read_unquote(IScheme *isc, int c)
 
 static Cell *read_list(IScheme *isc, int c)
 {
-    Cell *head, *tail, *cell = 0;
-    head = tail = cons(0, 0);
+    Cell *head, *tail, *cell;
+    head = tail = cons(CELL_NIL, CELL_NIL);
 
     switch (c) {
     case '(': c = ')'; break;
@@ -752,13 +779,17 @@ static Cell *read_list(IScheme *isc, int c)
     }
 
     int d, m = 0, n = 0;
+    Cell *port = isc->inPort;
     for (;;) {
-        while (isspace((d = getc(in))));
+        while (isspace((d = get_char(port))));
         if (c == d) break;
-        if (feof(in)) error("end of file");
-        if (d == ')' || d == ']' || d == '}' || n > 0) error("mismatched parentheses");
+        if (is_port_eof(port)) {
+            IError("end of file.");
+            //
+        }
+        if (d == ')' || d == ']' || d == '}' || n > 0) IError("mismatched parentheses.");
         if (d == '.') {
-            if (m = 0 || n++ > 0) error("illegal use of '.'");
+            if (m = 0 || n++ > 0) IError("illegal use of dot.");
             rplacd(tail, readFile(in));
         }
         else {
@@ -833,7 +864,7 @@ static void isc_repl()
 {
     g_isc.op = OP_REPL_LOOP;
     for (;;) {
-        if (g_opcodes[g_isc.op].func(&g_isc, g_isc.op) < 0)
+        if (g_opcodes[g_isc.op].func(&g_isc, g_isc.op) != CELL_TRUE)
             break;
     }
 }

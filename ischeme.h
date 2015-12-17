@@ -37,6 +37,7 @@ typedef Cell*(*Reader)(IScheme*, int);
 #define SEGS_NUM          100
 #define SEG_CELLS_NUM     5000
 #define SEG_MEM_SIZE      (SEG_CELLS_NUM * sizeof(Cell))
+#define MAX_LOAD_FILES    256
 #define INTL_BUF_SIZE     1024
 
 enum Ret {
@@ -166,6 +167,8 @@ struct _IScheme {
     Cell *symbols;
     Cell *inPort;
     Cell *outPort;
+    Cell *loadFiles[MAX_LOAD_FILES];
+    int loadFileIdx;
 
     Op op;
     Cell *retnv;

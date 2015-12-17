@@ -6,7 +6,7 @@
 
 #define CELL_TRUE       &g_true
 #define CELL_FALSE      &g_false
-#define CELL_NIL        &g_false
+#define CELL_NIL        &g_nil
 #define CELL_EOF        (Cell*)-1
 #define DELIMITERS      "()[]{}\";\f\t\v\n\r "
 #define READERS_NUM     128
@@ -23,7 +23,7 @@ static OpCode g_opcodes[] = {
 static Reader g_readers[READERS_NUM];
 static Cell g_true;
 static Cell g_false;
-//static Cell g_nil;
+static Cell g_nil;
 
 static void gc(IScheme *isc);//, Cell *args, Cell *env);
 
@@ -255,11 +255,44 @@ static inline void unget_char(Cell *out, int c) {
     }
 }
 
+static int skip_space(IScheme *isc) {
+    int c = 0, curLine = 0;
+    do {
+        c = get_char(isc);
+        if (c == '\n') ++curLine;
+    } while(isspace(c));
+    if (isc->loadFiles[isc->curFileIdx] && isc->loadFiles[isc->curFileIdx]->port->t & PORT_FILE)
+        isc->loadFiles[isc->curFileIdx]->port->f.curLine += curLine;
+    if (c != EOF) {
+        unget_char(isc, c);
+        return 0;
+    }
+    return EOF;
+}
+
+static int get_token(IScheme *isc) {
+    int c = skip_space(isc);
+    //TODO
+}
+
+static inline Cell *read_port(Cell *port)
+{
+    Cell *ret = CELL_EOF;
+    int c;
+    while (ret == NULL) {
+        while (isspace((c = get_char(port))));
+        if (c < 0 || c >= READERS_NUM) return CELL_EOF;
+        ret = g_readers[c](isc, c);
+    }
+    return ret;
+}
+
 static inline Cell *retn_helper(IScheme *isc, Cell *v) {
-    isc->retnv = v;
-    if (!is_pair(isc->contis) || !is_conti(car(isc->contis)))
+
+    if (v == CELL_EOF || !is_pair(isc->contis) || !is_conti(car(isc->contis)))
         return CELL_FALSE;
     Conti *conti = car(isc->contis);
+    isc->retnv = v;
     isc->op = conti->op;
     isc->args = conti->args;
     isc->code = conti->code;
@@ -283,17 +316,7 @@ Loop:
         mk_conti(isc, OP_REPL_EVAL, isc->args, isc->envir);
         gotoOp(isc, OP_REPL_READ);
     case OP_REPL_READ:
-    {
-        int c;
-        Cell *ret = NULL;
-        while (ret == NULL) {
-            while (isspace((c = get_char(isc->inPort))));
-            if (c < 0 || c >= READERS_NUM) return CELL_EOF;
-            ret = g_readers[c](isc, c);
-            if (ret == CELL_EOF) return CELL_EOF;
-        }
-        retnOp(isc, ret);
-    }
+        retnOp(isc, read_port(isc->inPort));
     case OP_REPL_EVAL:
     {
 
@@ -322,6 +345,13 @@ static Cell* internal(IScheme *isc, String s)
     c = mk_symbol(s);
     isc->symbols = cons(c, isc->symbols);
     return c;
+}
+
+static Cell *assq(Cell *key, Cell *list)
+{
+    for (; list; list = cdr(list))
+        if (!strcmp(symbol(key), symbol(caar(list)))) return car(list);
+    return CELL_NIL;
 }
 
 static Cell* mk_syntax(IScheme *isc, String s)
@@ -778,35 +808,42 @@ static Cell *read_list(IScheme *isc, int c)
     case '{': c = '}'; break;
     }
 
-    int d, m = 0, n = 0;
+    int d;
+    bool isPair = FALSE;
+    bool shouldEnd = FALSE;
     Cell *port = isc->inPort;
     for (;;) {
         while (isspace((d = get_char(port))));
         if (c == d) break;
         if (is_port_eof(port)) {
             IError("end of file.");
-            //
+            return CELL_EOF;
         }
-        if (d == ')' || d == ']' || d == '}' || n > 0) IError("mismatched parentheses.");
+        if (d == ')' || d == ']' || d == '}') {
+            IError("unexcepted '%c'.\n", d);
+            return CELL_EOF;
+        }
+
         if (d == '.') {
-            if (m = 0 || n++ > 0) IError("illegal use of dot.");
-            rplacd(tail, readFile(in));
+            d = get_char(port);
+            if (strchr(" \n\t", d)) {
+                // TODO
+                rplacd(tail, cons(cell, CELL_NIL));
+            } else {
+                unget_char(port, d);
+                unget_char(port, '.');
+            }
+        } else {
+            unget_char(port, d);
         }
-        else {
-            m++;
-            ungetc(d, in);
-            cell = readFile(in);
-            tail = rplacd(tail, cons(cell, 0));
-        }
+
+        cell = read_port(port);
+        if (cell == CELL_EOF)
+            return CELL_EOF;
+        tail = rplacd(tail, cons(cell, CELL_NIL));
     }
 
-    head = cdr(head);
-    if (head && symbolP(car(head))) {
-        Cell *syntax = assq(car(head), cdr(_syntaxTable));
-        if (syntax) head = apply(cdr(syntax), cdr(head), _environment);
-    }
-
-    return head;
+    return cdr(head);
 }
 
 static Cell *read_semi(IScheme *isc, int c)
@@ -843,7 +880,7 @@ static void isc_init(FILE *in, String name)
     init_readers(read_alpha,  "ABCDEFGHIJKLMNOPQRSTUVWXYZ");
     init_readers(read_alpha,  "!#$%&*/:<=>?@\\^_|~");
     init_readers(read_alpha,  ".");
-    //init_readers(read_hash,   "#");
+    init_readers(read_hash,   "#");
     init_readers(read_alpha,   "+-");
     init_readers(read_string, "\"");
     init_readers(read_quote,  "'");

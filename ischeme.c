@@ -4,12 +4,11 @@
 #include <math.h>
 #include "ischeme.h"
 
-#define CELL_TRUE       &g_true
-#define CELL_FALSE      &g_false
-#define CELL_NIL        &g_nil
-#define CELL_EOF        (Cell*)-1
+#define CELL_TRUE       (&g_true)
+#define CELL_FALSE      (&g_false)
+#define CELL_NIL        (&g_nil)
+#define CELL_EOF        (&g_eof)
 #define DELIMITERS      "()[]{}\";\f\t\v\n\r "
-#define READERS_NUM     128
 
 static IScheme g_isc = {0};
 static Cell* op_func(IScheme*, int);
@@ -20,10 +19,11 @@ static OpCode g_opcodes[] = {
     {0}
 };
 
-static Reader g_readers[READERS_NUM];
+static Reader g_readers[TOK_MAX];
 static Cell g_true;
 static Cell g_false;
 static Cell g_nil;
+static Cell g_eof;
 
 static void gc(IScheme *isc);//, Cell *args, Cell *env);
 
@@ -209,22 +209,9 @@ static Cell *mk_port(FILE *f, String name)
     return c;
 }
 
-static Cell *mk_conti(IScheme *isc, Op op, Cell *args, Cell *code)
+static Cell *mk_conti(IScheme *isc)
 {
-    Cell *c = NULL;
-    Conti *conti = (Conti*)malloc(sizeof(Conti));
-    if (conti) {
-        c = cell_alloc();
-        if (c) {
-            c->t = CONTI;
-            c->conti->op = op;
-            c->conti->args = args;
-            c->conti->envir = isc->envir;
-            c->conti->code = code;
-        }
-        isc->contis = cons(c, isc->contis);
-    }
-    return c;
+    return 0;
 }
 
 
@@ -255,36 +242,132 @@ static inline void unget_char(Cell *out, int c) {
     }
 }
 
+static inline int skip_line(IScheme *isc) {
+    int c = 0, n = 0;
+    while (c = get_char(isc->inPort) != EOF && c != '\n') ++n;
+    if (c == '\n') {
+        if (isc->loadFiles[isc->curFileIdx] && isc->loadFiles[isc->curFileIdx]->port->t & PORT_FILE)
+            ++isc->loadFiles[isc->curFileIdx]->port->f.curLine;
+        return ++n;
+    }
+    return EOF;
+}
+
+static int skip_comment(IScheme *isc) {
+    int n = 0;
+    int c = get_char(isc->inPort);
+    if (c == EOF) return EOF;
+    if (c == ';') {
+        ++n;
+        c = skip_line(isc);
+        if (c == EOF) return EOF;
+        n += c;
+    } else if (c == '#') {
+        c = get_char(isc->inPort);
+        if (c == EOF) return EOF;
+        if (c != '!')  {
+            unget_char(isc->inPort, c);
+            unget_char(isc->inPort, '#');
+            return 0;
+        }
+        n += 2;
+        c = skip_line(isc);
+        if (c == EOF) return EOF;
+        n += c;
+    } else {
+        unget_char(isc->inPort, c);
+        return 0;
+    }
+    if (c == '\n') return ++n;
+    return EOF;
+}
+
 static int skip_space(IScheme *isc) {
-    int c = 0, curLine = 0;
+    int c = 0, n = 0, curLine = 0;
     do {
-        c = get_char(isc);
+        c = get_char(isc->inPort);
         if (c == '\n') ++curLine;
+        else if (c == ';' || c == '#') {
+            unget_char(isc->inPort, c);
+            c = skip_comment(isc);
+            if (c <= 0) return n;
+            n += c;
+            continue;
+        }
+        ++n;
     } while(isspace(c));
     if (isc->loadFiles[isc->curFileIdx] && isc->loadFiles[isc->curFileIdx]->port->t & PORT_FILE)
         isc->loadFiles[isc->curFileIdx]->port->f.curLine += curLine;
     if (c != EOF) {
-        unget_char(isc, c);
-        return 0;
+        unget_char(isc->inPort, c);
+        return --n;
     }
     return EOF;
 }
 
 static int get_token(IScheme *isc) {
     int c = skip_space(isc);
-    //TODO
+    if (c == EOF) return TOK_EOF;
+    switch (c = get_char(isc->inPort)) {
+    case EOF: return TOK_EOF;
+    case '(': return TOK_LPAREN;
+    case ')': return TOK_RPAREN;
+    case '[': return TOK_LBRACKET;
+    case ']': return TOK_RBRACKET;
+    case '{': return TOK_LBRACE;
+    case '}': return TOK_RBRACE;
+    case '.':
+        if (skip_space(isc) > 0) return TOK_DOT;
+        unget_char(isc->inPort, c);
+        return TOK_ATOM;
+    case '\'': return TOK_QUOTE;
+    case '`': return TOK_QQUOTE;
+    case '"': return TOK_DQUOTE;
+    case ',':
+        c = get_char(isc->inPort);
+        if (c == '@') return TOK_UNQUOTE_SPLICING;
+        else unget_char(isc->inPort, c);
+        return TOK_UNQUOTE;
+    case '#':
+        c = get_char(isc->inPort);
+        if (c == '(') return TOK_VECTOR;
+        else if (c == '!') {
+            c = skip_line(isc);
+            if (c == EOF) return TOK_EOF;
+            return get_token(isc);
+        } else if (strchr("tfeibodx\\", c)) {
+            unget_char(isc->inPort, c);
+            return TOK_CONST;
+        }
+        IError("bad syntax '#%c'.\n", c);
+        return TOK_EOF;
+    case ';':
+        c = skip_line(isc);
+        if (c == EOF) return TOK_EOF;
+        return get_token(isc);
+    default:
+        unget_char(isc->inPort, c);
+        return TOK_ATOM;
+    }
 }
 
-static inline Cell *read_port(Cell *port)
+static Cell *read_cell(IScheme *isc)
 {
-    Cell *ret = CELL_EOF;
-    int c;
-    while (ret == NULL) {
-        while (isspace((c = get_char(port))));
-        if (c < 0 || c >= READERS_NUM) return CELL_EOF;
-        ret = g_readers[c](isc, c);
+    int t = get_token(isc->inPort);
+    if (t == TOK_EOF) {
+        IError("end of file.");
+        return CELL_EOF;
     }
-    return ret;
+    return g_readers[t](isc, t);
+}
+
+static Cell *read_cell_by_token(IScheme *isc, int t)
+{
+    if (t == TOK_EOF) {
+        IError("end of file.");
+        return CELL_EOF;
+    }
+    return g_readers[t](isc, t);
 }
 
 static inline Cell *retn_helper(IScheme *isc, Cell *v) {
@@ -301,8 +384,25 @@ static inline Cell *retn_helper(IScheme *isc, Cell *v) {
     return CELL_TRUE;
 }
 
-#define gotoOp(sc, o)      { sc->op=o; goto Loop; }
-#define retnOp(sc, r)      { return retn_helper(sc, r); }
+#define gotoOp(sc, o)      sc->op=o; goto Loop
+#define retnOp(sc, r)      return retn_helper(sc, r)
+#define saveOp(sc,o,a,e)   save_op(sc, o, a, e)
+
+static void save_op(IScheme *isc, Op op, Cell *args, Cell *code)
+{
+    Conti *conti = (Conti*)malloc(sizeof(Conti));
+    if (conti) {
+        Cell *c = cell_alloc();
+        if (c) {
+            c->t = CONTI;
+            c->conti->op = op;
+            c->conti->args = args;
+            c->conti->envir = isc->envir;
+            c->conti->code = code;
+        }
+        isc->contis = cons(c, isc->contis);
+    }
+}
 
 static Cell *op_func0(IScheme *isc, int op)
 {
@@ -311,21 +411,39 @@ Loop:
     case OP_LOAD:
         break;
     case OP_REPL_LOOP:
-        mk_conti(isc, OP_REPL_LOOP, isc->args, isc->envir);
-        mk_conti(isc, OP_REPL_PRINT, isc->args, isc->envir);
-        mk_conti(isc, OP_REPL_EVAL, isc->args, isc->envir);
+        saveOp(isc, OP_REPL_LOOP, isc->args, isc->envir);
+        saveOp(isc, OP_REPL_PRINT, isc->args, isc->envir);
+        saveOp(isc, OP_REPL_EVAL, isc->args, isc->envir);
         gotoOp(isc, OP_REPL_READ);
     case OP_REPL_READ:
-        retnOp(isc, read_port(isc->inPort));
+        retnOp(isc, read_cell(isc));
     case OP_REPL_EVAL:
-    {
-
-        break;
-    }
+        isc->code = isc->retnv;
+        gotoOp(isc, OP_EVAL);
     case OP_REPL_PRINT:
         break;
     }
-    return 0;
+    case OP_EVAL:
+        if (is_symbol(code)) {
+
+        } else if (is_pair(isc->code)) {
+
+        } else{
+            retnOp(isc, isc->code);
+        }
+        break;
+    case OP_APPLY:
+        break;
+    return CELL_EOF;
+}
+
+static Cell *op_func1(IScheme *isc, int op)
+{
+Loop:
+    switch (op) {
+
+    }
+    return CELL_EOF;
 }
 
 static Cell *find_symbol(IScheme *isc, String s)
@@ -384,12 +502,7 @@ static Cell* mk_envir(IScheme *isc, Cell *s, Cell *v)
 
 static Cell *read_illegal(IScheme *isc, int c)
 {
-    return (Cell*)-1;
-}
-
-static Cell *read_blank(IScheme *isc, int c)
-{
-    return NULL;
+    return CELL_EOF;
 }
 
 static inline int read_upto(Cell *port, char *upto, char *out, int size)
@@ -614,7 +727,7 @@ Error:
     return number;
 }
 
-static Cell *read_alpha(IScheme *isc, int c)
+static Cell *read_atom(IScheme *isc, int c)
 {
     Number *real = NULL;
     unget_char(isc->inPort, c);
@@ -746,11 +859,6 @@ Error1:
     return NULL;
 }
 
-static Cell *read_hash(IScheme *isc, int c)
-{
-
-}
-
 static Cell *read_string(IScheme *isc, int q)
 {
     char *buf = isc->inBuff;
@@ -797,64 +905,83 @@ static Cell *read_unquote(IScheme *isc, int c)
     return 0;
 }
 
+static Cell *read_unquote_splicing(IScheme *isc, int c)
+{
+    return 0;
+}
+
+static Cell *read_const(IScheme *isc, int c)
+{
+    return 0;
+}
+
+static Cell *read_vector(IScheme *isc, int c)
+{
+    return 0;
+}
+
 static Cell *read_list(IScheme *isc, int c)
 {
-    Cell *head, *tail, *cell;
+    Cell *head, *tail, *cell = CELL_NIL;
     head = tail = cons(CELL_NIL, CELL_NIL);
 
     switch (c) {
-    case '(': c = ')'; break;
-    case '[': c = ']'; break;
-    case '{': c = '}'; break;
+    case '(': c = TOK_RPAREN; break;
+    case '[': c = TOK_RBRACKET; break;
+    case '{': c = TOK_RBRACE; break;
     }
 
     int d;
-    bool isPair = FALSE;
-    bool shouldEnd = FALSE;
     Cell *port = isc->inPort;
     for (;;) {
-        while (isspace((d = get_char(port))));
-        if (c == d) break;
-        if (is_port_eof(port)) {
+        d = get_token(isc);
+        if (d == TOK_EOF) {
             IError("end of file.");
             return CELL_EOF;
         }
-        if (d == ')' || d == ']' || d == '}') {
-            IError("unexcepted '%c'.\n", d);
+        if (c == d) break;
+        if (d == TOK_RPAREN || d == TOK_RBRACKET || d == TOK_RBRACE) {
+            IError("unmatched brackets.");
             return CELL_EOF;
         }
 
-        if (d == '.') {
-            d = get_char(port);
-            if (strchr(" \n\t", d)) {
-                // TODO
-                rplacd(tail, cons(cell, CELL_NIL));
-            } else {
-                unget_char(port, d);
-                unget_char(port, '.');
+        if (d == TOK_DOT) {
+            if (cell == CELL_NIL) {
+                IError("illegal used of dot.");
+                return CELL_EOF;
             }
-        } else {
-            unget_char(port, d);
+            cell = read_cell(isc);
+            if (cell == CELL_EOF)
+                return CELL_EOF;
+            tail = rplacd(tail, cell);
+            c = get_token(isc);
+            if (c != TOK_RPAREN) {
+                IError("illegal used of dot.");
+                return CELL_EOF;
+            }
         }
-
-        cell = read_port(port);
+        cell = read_cell_by_token(isc, d);
         if (cell == CELL_EOF)
             return CELL_EOF;
         tail = rplacd(tail, cons(cell, CELL_NIL));
     }
-
     return cdr(head);
 }
 
-static Cell *read_semi(IScheme *isc, int c)
+static void init_readers()
 {
-    while ((c = getc(in)) && c != '\n' && c != '\r');
-    return 0;
-}
-
-static void init_readers(Reader r, char *chrs)
-{
-    while (*chrs) g_readers[*chrs++] = r;
+    for (int i = 0;  i < TOK_MAX;  i++) g_readers[i]= read_illegal;
+    g_readers[TOK_ATOM]     = read_atom;
+    g_readers[TOK_LPAREN]   = read_list;
+    g_readers[TOK_LBRACKET] = read_list;
+    g_readers[TOK_LBRACE]   = read_list;
+    g_readers[TOK_QUOTE]    = read_quote;
+    g_readers[TOK_DQUOTE]   = read_string;
+    g_readers[TOK_QQUOTE]   = read_quasiquote;
+    g_readers[TOK_UNQUOTE]  = read_unquote;
+    g_readers[TOK_UNQUOTE_SPLICING] = read_unquote_splicing;
+    g_readers[TOK_CONST]    = read_const;
+    g_readers[TOK_VECTOR]   = read_vector;
 }
 
 static void isc_init(FILE *in, String name)
@@ -873,22 +1000,7 @@ static void isc_init(FILE *in, String name)
     g_isc.inPort = mk_port(in, name);
     g_isc.outPort = mk_port(stdout, NULL);
 
-    for (int i = 0;  i < 256;  i++) g_readers[i]= read_illegal;
-    init_readers(read_blank,  " \t\n\v\f\r");
-    init_readers(read_alpha,  "0123456789");
-    init_readers(read_alpha,  "abcdefghijklmnopqrstuvwxyz");
-    init_readers(read_alpha,  "ABCDEFGHIJKLMNOPQRSTUVWXYZ");
-    init_readers(read_alpha,  "!#$%&*/:<=>?@\\^_|~");
-    init_readers(read_alpha,  ".");
-    init_readers(read_hash,   "#");
-    init_readers(read_alpha,   "+-");
-    init_readers(read_string, "\"");
-    init_readers(read_quote,  "'");
-    init_readers(read_quasiquote, "`");
-    init_readers(read_unquote, ",");
-    init_readers(read_list,   "([{");
-    init_readers(read_semi,   ";");
-
+    init_readers();
     for (int i = 0; i < sizeof(g_opcodes)/sizeof(OpCode); i++) {
         if (g_opcodes[i].name) {
             if (g_opcodes[i].t == SYNTAX) mk_syntax(&g_isc, g_opcodes[i].name);
@@ -901,7 +1013,7 @@ static void isc_repl()
 {
     g_isc.op = OP_REPL_LOOP;
     for (;;) {
-        if (g_opcodes[g_isc.op].func(&g_isc, g_isc.op) != CELL_TRUE)
+        if (g_opcodes[g_isc.op].func(&g_isc, g_isc.op) == CELL_NIL)
             break;
     }
 }
@@ -931,4 +1043,3 @@ int main(int argc, char *argv[])
     isc_finalize();
     return 0;
 }
-

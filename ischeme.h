@@ -64,6 +64,26 @@ enum Type {
     CONTI,
 };
 
+enum Token {
+    TOK_EOF = -1,
+    TOK_ATOM,
+    TOK_LPAREN,
+    TOK_LBRACKET,
+    TOK_LBRACE,
+    TOK_RPAREN,
+    TOK_RBRACKET,
+    TOK_RBRACE,
+    TOK_DOT,
+    TOK_QUOTE,
+    TOK_DQUOTE,
+    TOK_QQUOTE,
+    TOK_UNQUOTE,
+    TOK_UNQUOTE_SPLICING,
+    TOK_CONST,
+    TOK_VECTOR,
+    TOK_MAX
+};
+
 enum PortType {
     PORT_FREE   = 0,
     PORT_INPUT  = 1<<1,
@@ -124,6 +144,7 @@ struct _Port {
         struct {
             FILE *file;
             char *name;
+            int curLine;
         } f;
         struct {
           char *start;
@@ -168,7 +189,7 @@ struct _IScheme {
     Cell *inPort;
     Cell *outPort;
     Cell *loadFiles[MAX_LOAD_FILES];
-    int loadFileIdx;
+    int curFileIdx;
 
     Op op;
     Cell *retnv;

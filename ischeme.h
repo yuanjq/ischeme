@@ -40,6 +40,11 @@ typedef Cell*(*Reader)(IScheme*, int);
 #define MAX_LOAD_FILES    256
 #define INTL_BUF_SIZE     1024
 
+#define TYPE_MASK         0x0000FFFF
+#define MARK_IMMUTABLE    0x00010000
+#define MARK_REFERENCE    0x00020000
+
+
 enum Ret {
     RET_FAILED = -1,
     RET_SUCCESSED = 0
@@ -48,7 +53,7 @@ enum Ret {
 enum Type {
     FREE = 0,
     CHAR,
-    BOOL,
+    BOOLEAN,
     NUMBER,
     STRING,
     SYMBOL,

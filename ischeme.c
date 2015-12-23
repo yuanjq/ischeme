@@ -8,9 +8,15 @@
 #define CELL_FALSE      (&g_false)
 #define CELL_NIL        (&g_nil)
 #define CELL_EOF        (&g_eof)
+#define CELL_ERR        (Cell*)-1
 #define DELIMITERS      "()[]{}\";\f\t\v\n\r "
 
-static IScheme g_isc = {0};
+#define gotoOp(sc, o)      sc->op=o; goto Loop
+#define retnOp(sc, r)      return retn_helper(sc, r)
+#define saveOp(sc,o,a,e)   save_op(sc, o, a, e)
+#define Error(sc,f,...)    return error_helper(sc,f,##__VA_ARGS__)
+
+static IScheme *gp_isc = NULL;
 static Cell* op_func(IScheme*, int);
 static OpCode g_opcodes[] = {
     #define _OPCODE(f, n, t, o) {f, n, t},
@@ -52,16 +58,16 @@ static int seg_alloc(IScheme *isc, int num)
 
 static Cell *cell_alloc()//Cell *args, Cell *env)
 {
-    if (!g_isc.freeCells) {
-        gc(&g_isc);//, args, env);
-        if (!g_isc.freeCells && seg_alloc(&g_isc, 1) <= 0) {
+    if (!gp_isc->freeCells) {
+        gc(gp_isc);//, args, env);
+        if (!gp_isc->freeCells && seg_alloc(gp_isc, 1) <= 0) {
             IError("no memery.");
             return NULL;
         }
     }
-    Cell *c = g_isc.freeCells;
-    g_isc.freeCells = c->next;
-    g_isc.freeCellCount--;
+    Cell *c = gp_isc->freeCells;
+    gp_isc->freeCells = c->next;
+    gp_isc->freeCellCount--;
     return c;
 }
 
@@ -370,7 +376,8 @@ static Cell *read_cell_by_token(IScheme *isc, int t)
     return g_readers[t](isc, t);
 }
 
-static inline Cell *retn_helper(IScheme *isc, Cell *v) {
+static inline Cell *retn_helper(IScheme *isc, Cell *v)
+{
 
     if (v == CELL_EOF || !is_pair(isc->contis) || !is_conti(car(isc->contis)))
         return CELL_FALSE;
@@ -384,9 +391,16 @@ static inline Cell *retn_helper(IScheme *isc, Cell *v) {
     return CELL_TRUE;
 }
 
-#define gotoOp(sc, o)      sc->op=o; goto Loop
-#define retnOp(sc, r)      return retn_helper(sc, r)
-#define saveOp(sc,o,a,e)   save_op(sc, o, a, e)
+static Cell *error_helper(IScheme *isc, String fmt, ...)
+{
+    Port *port = isc->loadFiles[isc->curFileIdx]->port;
+    if (port->t & PORT_FILE && port->f.file != stdin) {
+        // TODO
+    }
+
+    isc->op = OP_ERROR;
+    return CELL_TRUE;
+}
 
 static void save_op(IScheme *isc, Op op, Cell *args, Cell *code)
 {
@@ -425,7 +439,9 @@ Loop:
     }
     case OP_EVAL:
         if (is_symbol(code)) {
-
+            Cell *c = assq(code, isc->globalEnvir);
+            if (is_pair(c)) retnOp(isc, cdr(c));
+            else IError("unbond variable:%s\n", symbol(code));
         } else if (is_pair(isc->code)) {
 
         } else{
@@ -467,8 +483,14 @@ static Cell* internal(IScheme *isc, String s)
 
 static Cell *assq(Cell *key, Cell *list)
 {
-    for (; list; list = cdr(list))
-        if (!strcmp(symbol(key), symbol(caar(list)))) return car(list);
+    for (; is_pair(list); list = cdr(list)) {
+        if (!is_pair(car(list))) {
+            IError("invalid association list.");
+            return CELL_ERR;
+        }
+        if (is_pair(car(list)) && key == caar(list))
+            return car(list);
+    }
     return CELL_NIL;
 }
 
@@ -986,34 +1008,34 @@ static void init_readers()
 
 static void isc_init(FILE *in, String name)
 {
-    g_true.t = BOOL;
+    g_true.t = BOOLEAN;
     g_true.chr = TRUE;
-    g_false.t = BOOL;
+    g_false.t = BOOLEAN;
     g_false.chr = FALSE;
 
-    g_isc.freeCellCount = 0;
-    g_isc.freeCells = NULL;
-    g_isc.lastSeg = -1;
-    g_isc.globalEnvir = NULL;
-    seg_alloc(&g_isc, 3);
+    gp_isc->freeCellCount = 0;
+    gp_isc->freeCells = NULL;
+    gp_isc->lastSeg = -1;
+    gp_isc->globalEnvir = NULL;
+    seg_alloc(gp_isc, 3);
 
-    g_isc.inPort = mk_port(in, name);
-    g_isc.outPort = mk_port(stdout, NULL);
+    gp_isc->inPort = mk_port(in, name);
+    gp_isc->outPort = mk_port(stdout, NULL);
 
     init_readers();
     for (int i = 0; i < sizeof(g_opcodes)/sizeof(OpCode); i++) {
         if (g_opcodes[i].name) {
-            if (g_opcodes[i].t == SYNTAX) mk_syntax(&g_isc, g_opcodes[i].name);
-            mk_envir(&g_isc, internal(&g_isc, g_opcodes[i].name), mk_long(i));
+            if (g_opcodes[i].t == SYNTAX) mk_syntax(gp_isc, g_opcodes[i].name);
+            mk_envir(gp_isc, internal(gp_isc, g_opcodes[i].name), mk_long(i));
         }
     }
 }
 
 static void isc_repl()
 {
-    g_isc.op = OP_REPL_LOOP;
+    gp_isc->op = OP_REPL_LOOP;
     for (;;) {
-        if (g_opcodes[g_isc.op].func(&g_isc, g_isc.op) == CELL_NIL)
+        if (g_opcodes[gp_isc->op].func(gp_isc, gp_isc->op) == CELL_NIL)
             break;
     }
 }

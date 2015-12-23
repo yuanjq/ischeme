@@ -38,7 +38,7 @@ typedef Cell*(*Reader)(IScheme*, int);
 #define SEG_CELLS_NUM     5000
 #define SEG_MEM_SIZE      (SEG_CELLS_NUM * sizeof(Cell))
 #define MAX_LOAD_FILES    256
-#define INTL_BUF_SIZE     1024
+#define STR_BUF_SIZE      1024
 
 #define TYPE_MASK         0x0000FFFF
 #define MARK_IMMUTABLE    0x00010000
@@ -202,7 +202,7 @@ struct _IScheme {
     Cell *envir;
     Cell *code;
     Cell *contis;
-    char inBuff[INTL_BUF_SIZE];
+    char buff[STR_BUF_SIZE];
 };
 
 struct _OpCode {

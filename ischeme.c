@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdarg.h>
 #include "ischeme.h"
 
 #define CELL_TRUE       (&g_true)
@@ -11,13 +12,13 @@
 #define CELL_ERR        (Cell*)-1
 #define DELIMITERS      "()[]{}\";\f\t\v\n\r "
 
-#define gotoOp(sc, o)      sc->op=o; goto Loop
-#define retnOp(sc, r)      return retn_helper(sc, r)
-#define saveOp(sc,o,a,e)   save_op(sc, o, a, e)
-#define Error(sc,f,...)    return error_helper(sc,f,##__VA_ARGS__)
+#define gotoOp(sc, o)      	sc->op=o; return CELL_TRUE
+#define popOp(sc, r)       	return pop_op(sc, r)
+#define pushOp(sc,o,a,e)   	push_op(sc, o, a, e)
+#define Error(sc,f,...)	    return error_helper(sc,f,##__VA_ARGS__)
 
 static IScheme *gp_isc = NULL;
-static Cell* op_func(IScheme*, int);
+static Cell* op_func0(IScheme*, int);
 static OpCode g_opcodes[] = {
     #define _OPCODE(f, n, t, o) {f, n, t},
     #include "opcodes.h"
@@ -26,8 +27,8 @@ static OpCode g_opcodes[] = {
 };
 
 static Reader g_readers[TOK_MAX];
-static Cell g_true;
-static Cell g_false;
+static Cell g_true = {t:BOOLEAN, {chr:TRUE}};
+static Cell g_false = {t:BOOLEAN, {chr:FALSE}};
 static Cell g_nil;
 static Cell g_eof;
 
@@ -376,9 +377,8 @@ static Cell *read_cell_by_token(IScheme *isc, int t)
     return g_readers[t](isc, t);
 }
 
-static inline Cell *retn_helper(IScheme *isc, Cell *v)
+static inline Cell *pop_op(IScheme *isc, Cell *v)
 {
-
     if (v == CELL_EOF || !is_pair(isc->contis) || !is_conti(car(isc->contis)))
         return CELL_FALSE;
     Conti *conti = car(isc->contis);
@@ -393,16 +393,22 @@ static inline Cell *retn_helper(IScheme *isc, Cell *v)
 
 static Cell *error_helper(IScheme *isc, String fmt, ...)
 {
-    Port *port = isc->loadFiles[isc->curFileIdx]->port;
-    if (port->t & PORT_FILE && port->f.file != stdin) {
-        // TODO
-    }
+    va_list ap;
+    va_start(ap, fmt);
 
+    Port *in = isc->loadFiles[isc->curFileIdx]->port;
+    Port *out = isc->outPort->port;
+    fprintf(out->f.file, "*Error*: ");
+    if (in->t & PORT_FILE && in->f.file != stdin) {
+        fprintf(out->f.file, "file \"%s\", line %d\n", out->f.name, out->f.curLine);
+    }
+    vfprintf(out->f.file, fmt, ap);
+    va_end(ap);
     isc->op = OP_ERROR;
     return CELL_TRUE;
 }
 
-static void save_op(IScheme *isc, Op op, Cell *args, Cell *code)
+static void push_op(IScheme *isc, Op op, Cell *args, Cell *code)
 {
     Conti *conti = (Conti*)malloc(sizeof(Conti));
     if (conti) {
@@ -420,42 +426,52 @@ static void save_op(IScheme *isc, Op op, Cell *args, Cell *code)
 
 static Cell *op_func0(IScheme *isc, int op)
 {
-Loop:
+    Cell *c;
     switch (op) {
     case OP_LOAD:
         break;
     case OP_REPL_LOOP:
-        saveOp(isc, OP_REPL_LOOP, isc->args, isc->envir);
-        saveOp(isc, OP_REPL_PRINT, isc->args, isc->envir);
-        saveOp(isc, OP_REPL_EVAL, isc->args, isc->envir);
+        pushOp(isc, OP_REPL_LOOP, isc->args, isc->envir);
+        pushOp(isc, OP_REPL_PRINT, isc->args, isc->envir);
+        pushOp(isc, OP_REPL_EVAL, isc->args, isc->envir);
         gotoOp(isc, OP_REPL_READ);
     case OP_REPL_READ:
-        retnOp(isc, read_cell(isc));
+        popOp(isc, read_cell(isc));
     case OP_REPL_EVAL:
         isc->code = isc->retnv;
         gotoOp(isc, OP_EVAL);
     case OP_REPL_PRINT:
         break;
-    }
     case OP_EVAL:
-        if (is_symbol(code)) {
-            Cell *c = assq(code, isc->globalEnvir);
-            if (is_pair(c)) retnOp(isc, cdr(c));
-            else IError("unbond variable:%s\n", symbol(code));
+        if (is_symbol(isc->code)) {
+            c = assq(isc->code, isc->envir);
+            if (is_pair(c)) popOp(isc, cdr(c));
+            else Error(isc, "unbound variable:%s\n", symbol(isc->code));
         } else if (is_pair(isc->code)) {
-
+            if (is_syntax(c = car(isc->code))) {
+                isc->code = cdr(isc->code);
+                gotoOp(isc, );
+            } else {
+                pushOp(isc, OP_EARG0, CELL_NIL, isc->code);
+                isc->code = car(isc->code);
+                gotoOp(isc, OP_EVAL);
+            }
         } else{
-            retnOp(isc, isc->code);
+            popOp(isc, isc->code);
         }
+        break;
+    case OP_EARG0:
         break;
     case OP_APPLY:
         break;
-    return CELL_EOF;
+    case OP_ERROR:
+        break;
+	}
+    return CELL_TRUE;
 }
 
 static Cell *op_func1(IScheme *isc, int op)
 {
-Loop:
     switch (op) {
 
     }
@@ -483,15 +499,12 @@ static Cell* internal(IScheme *isc, String s)
 
 static Cell *assq(Cell *key, Cell *list)
 {
+	String s = symbol(key);
     for (; is_pair(list); list = cdr(list)) {
-        if (!is_pair(car(list))) {
-            IError("invalid association list.");
-            return CELL_ERR;
-        }
-        if (is_pair(car(list)) && key == caar(list))
+        if (!strcmp(s, symbol(caar(list)))
             return car(list);
     }
-    return CELL_NIL;
+    return NULL;
 }
 
 static Cell* mk_syntax(IScheme *isc, String s)
@@ -503,8 +516,8 @@ static Cell* mk_syntax(IScheme *isc, String s)
 
 static Cell *find_envir(IScheme *isc, Cell *s)
 {
-    for (Cell *e = isc->globalEnvir; e; e = cdr(isc->globalEnvir)) {
-        if (isCons(car(e)) && caar(e) == s)
+    for (Cell *e = isc->globalEnvir; is_pair(e); e = cdr(isc->globalEnvir)) {
+        if (is_pair(car(e)) && caar(e) == s)
             return car(e);
     }
     return NULL;
@@ -626,9 +639,9 @@ static Number *read_real(char **ppStart, char *pEnd, Radix radix)
     bool bFindSlash = FALSE;
     char *pBuf = NULL;
 
-    if (pEnd - p >= INTL_BUF_SIZE)
+    if (pEnd - p >= STR_BUF_SIZE)
         goto Error;
-    pBuf = malloc(INTL_BUF_SIZE);
+    pBuf = malloc(STR_BUF_SIZE);
     if (!pBuf)
         goto Error;
 
@@ -753,7 +766,7 @@ static Cell *read_atom(IScheme *isc, int c)
 {
     Number *real = NULL;
     unget_char(isc->inPort, c);
-    char *p = isc->inBuff;
+    char *p = isc->buff;
     int totalLen = read_upto(isc->inPort, p, DELIMITERS);
 
     if (totalLen <= 0) {
@@ -789,25 +802,25 @@ static Cell *read_atom(IScheme *isc, int c)
             radix = HEX;
             break;
         case 'e': case 'E':
-            if (exactnes != NO_EXACTNESS)
+            if (exactness != NO_EXACTNESS)
                 goto Error0;
             exactness = EXACT;
             break;
         case 'i': case 'I':
-            if (exactnes != NO_EXACTNESS)
+            if (exactness != NO_EXACTNESS)
                 goto Error0;
             exactness = INEXACT;
             break;
         case 'f': case 'F':
-            if (exactnes != NO_EXACTNESS || radix != NO_RADIX || p + 2 != pEnd)
+            if (exactness != NO_EXACTNESS || radix != NO_RADIX || p + 2 != pEnd)
                 goto Error0;
             return CELL_FALSE;
         case 't': case "T":
-            if (exactnes != NO_EXACTNESS || radix != NO_RADIX || p + 2 != pEnd)
+            if (exactness != NO_EXACTNESS || radix != NO_RADIX || p + 2 != pEnd)
                 goto Error0;
             return CELL_TRUE;
         case '\\':
-            if (exactnes != NO_EXACTNESS || radix != NO_RADIX || p + 3 != pEnd)
+            if (exactness != NO_EXACTNESS || radix != NO_RADIX || p + 3 != pEnd)
                 goto Error0;
             return mk_char(p[2]);
         default:
@@ -822,7 +835,7 @@ static Cell *read_atom(IScheme *isc, int c)
             goto Error1;
         if (p == pEnd) {
             if (!real)
-                return mk_symbol(isc->inBuff);
+                return mk_symbol(isc->buff);
             else
                 return mk_number(real);
         } else {
@@ -869,7 +882,7 @@ MkSymbol:
     if (real) {
         free(real);
     }
-    return mk_symbol(isc->inBuff);
+    return mk_symbol(isc->buff);
 Error0:
     IError("bad syntax '%s'.\n", p);
     return NULL;
@@ -883,11 +896,11 @@ Error1:
 
 static Cell *read_string(IScheme *isc, int q)
 {
-    char *buf = isc->inBuff;
+    char *buf = isc->buff;
     Cell *port = isc->inPort;
     int idx = 0;
     int c;
-    while (idx < INTL_BUF_SIZE && (c = get_char(port)) > 0 && c != q)
+    while (idx < STR_BUF_SIZE && (c = get_char(port)) > 0 && c != q)
     {
         if ('\\' == c)
         {
@@ -1035,7 +1048,7 @@ static void isc_repl()
 {
     gp_isc->op = OP_REPL_LOOP;
     for (;;) {
-        if (g_opcodes[gp_isc->op].func(gp_isc, gp_isc->op) == CELL_NIL)
+        if (g_opcodes[gp_isc->op].func(gp_isc, gp_isc->op) == CELL_ERR)
             break;
     }
 }

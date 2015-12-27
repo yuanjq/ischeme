@@ -5,10 +5,10 @@
 #include <stdarg.h>
 #include "ischeme.h"
 
-#define CELL_TRUE       (&g_true)
-#define CELL_FALSE      (&g_false)
-#define CELL_NIL        (&g_nil)
-#define CELL_EOF        (&g_eof)
+#define CELL_TRUE       &g_true
+#define CELL_FALSE      &g_false
+#define CELL_NIL        &g_nil
+#define CELL_EOF        &g_eof
 #define CELL_ERR        (Cell*)-1
 #define DELIMITERS      "()[]{}\";\f\t\v\n\r "
 
@@ -16,6 +16,9 @@
 #define popOp(sc, r)       	return pop_op(sc, r)
 #define pushOp(sc,o,a,e)   	push_op(sc, o, a, e)
 #define Error(sc,f,...)	    return error_helper(sc,f,##__VA_ARGS__)
+#define closure_code(c)     car(c)
+#define closure_env(c)      cdr(c)
+
 
 static IScheme *gp_isc = NULL;
 static Cell* op_func0(IScheme*, int);
@@ -38,20 +41,20 @@ static void gc(IScheme *isc);//, Cell *args, Cell *env);
 /************** memery manager ************/
 static int seg_alloc(IScheme *isc, int num)
 {
-    if (isc->lastSeg + num >= SEGS_NUM) return 0;
+    if (isc->last_seg + num >= SEGS_NUM) return 0;
 
     for (int i=0; i<num; i++)
     {
-        int idx = ++isc->lastSeg;
+        int idx = ++isc->last_seg;
         isc->segs[idx] = (Cell*)malloc(SEG_MEM_SIZE);
         Cell *pNew = isc->segs[idx];
-        isc->freeCellCount += SEG_CELLS_NUM;
+        isc->free_cell_count += SEG_CELLS_NUM;
 
         Cell *pLast = pNew + SEG_CELLS_NUM - 1;
         for (Cell *c = pNew; c <= pLast; c++) c->next = c + 1;
 
-        pLast->next = isc->freeCells;
-        isc->freeCells = pNew;
+        pLast->next = isc->free_cells;
+        isc->free_cells = pNew;
     }
 
     return num;
@@ -59,16 +62,16 @@ static int seg_alloc(IScheme *isc, int num)
 
 static Cell *cell_alloc()//Cell *args, Cell *env)
 {
-    if (!gp_isc->freeCells) {
+    if (!gp_isc->free_cells) {
         gc(gp_isc);//, args, env);
-        if (!gp_isc->freeCells && seg_alloc(gp_isc, 1) <= 0) {
+        if (!gp_isc->free_cells && seg_alloc(gp_isc, 1) <= 0) {
             IError("no memery.");
             return NULL;
         }
     }
-    Cell *c = gp_isc->freeCells;
-    gp_isc->freeCells = c->next;
-    gp_isc->freeCellCount--;
+    Cell *c = gp_isc->free_cells;
+    gp_isc->free_cells = c->next;
+    gp_isc->free_cell_count--;
     return c;
 }
 
@@ -81,17 +84,31 @@ static void gc(IScheme *isc)//, Cell *args, Cell *env)
 
 
 /*************** syntax **************/
-static bool is_pair(Cell *c)     { return c && c->t == PAIR; }
-static bool is_symbol(Cell *c)	 { return c && c->t == SYMBOL; }
-static bool is_port(Cell *c)     { return c && c->t == PORT; }
-static bool is_conti(Cell *c)    { return c && c->t == CONTI; }
-static bool is_port_eof(Cell *c) { return c && c->t == PORT && c->port && c->port->t & PORT_EOF; }
+static bool is_pair(Cell *c)     { return c && T(c) == PAIR; }
+static bool is_symbol(Cell *c)  { return c && T(c) == SYMBOL; }
+static bool is_syntax(Cell *c)  { return c && T(c) == SYNTAX; }
+static bool is_proc(Cell *c)     { return c && T(c) == PROC; }
+static bool is_iproc(Cell *c)   { return c && T(c) == IPROC; }
+static bool is_eproc(Cell *c)   { return c && T(c) == EPROC; }
+static bool is_macro(Cell *c)   { return c && T(c) == MACRO; }
+static bool is_promise(Cell *c)   { return c && T(c) == PROMISE; }
+
+static bool is_port(Cell *c)     { return c && T(c) == PORT; }
+static bool is_conti(Cell *c)    { return c && T(c) == CONTI; }
+static bool is_port_eof(Cell *c) { return c && T(c) == PORT && c->port && c->port->t & PORT_EOF; }
+
+static bool is_immutable(Cell *c)   { return c && c->t & M_IMMUTABLE; }
+static bool is_interactive(IScheme *isc) {
+    return isc->cur_file_idx == 0 &&
+           isc->load_files[0]->t & PORT_FILE &&
+           isc->load_files[0]->port->f.file == stdin;
+}
 
 static String symbol(Cell *c)    { return is_symbol(c) ? c->str: NULL; }
 static Port* port(Cell *c)       { return is_port(c) ? c->port : NULL; }
 
-static Cell *car(Cell *c)        { return is_pair(c) ? c->pair.a : NULL; }
-static Cell *cdr(Cell *c)        { return is_pair(c) ? c->pair.d : NULL; }
+static Cell *car(Cell *c)        { return (is_pair(c) || is_proc(c) || is_macro(c) || is_promise(c)) ? c->pair.a : NULL; }
+static Cell *cdr(Cell *c)        { return (is_pair(c) || is_proc(c) || is_macro(c) || is_promise(c)) ? c->pair.d : NULL; }
 static Cell *caar(Cell *c)       { return car(car(c)); }
 static Cell *cadr(Cell *c)       { return car(cdr(c)); }
 static Cell *cdar(Cell *c)       { return cdr(car(c)); }
@@ -99,6 +116,7 @@ static Cell *cddr(Cell *c)       { return cdr(cdr(c)); }
 
 static Cell *rplaca(Cell *c, Cell *a)    { return is_pair(c) ? c->pair.a = a : NULL; }
 static Cell *rplacd(Cell *c, Cell *d)    { return is_pair(c) ? c->pair.d = d : NULL; }
+
 
 static Cell *cons(Cell *a, Cell *d) {
     Cell *c = NULL;
@@ -216,6 +234,26 @@ static Cell *mk_port(FILE *f, String name)
     return c;
 }
 
+static Cell *mk_syntax(int op)
+{
+    Cell *c = cell_alloc();
+    if (c) {
+        c->t = SYNTAX;
+        c->chr = op;
+    }
+    return c;
+}
+
+static Cell *mk_iproc(int op)
+{
+    Cell *c = cell_alloc();
+    if (c) {
+        c->t = IPROC;
+        c->chr = op;
+    }
+    return c;
+}
+
 static Cell *mk_conti(IScheme *isc)
 {
     return 0;
@@ -223,6 +261,69 @@ static Cell *mk_conti(IScheme *isc)
 
 
 /***************** repl loop ******************/
+static void port_close(IScheme *isc, Cell* p, int f) {
+	Port *port = p->port;
+	port->t &= ~f;
+	if((port->t & (PORT_INPUT | PORT_OUTPUT)) == 0) {
+		if(port->t & PORT_FILE) {
+			if(port->f.name) free(port->f.name);
+			fclose(port->f.file);
+		}
+		port->t = PORT_FREE;
+	}
+}
+
+static int push_load_file(IScheme *isc, String name) {
+	if (isc->cur_file_idx == MAX_LOAD_FILES-1) return 0;
+	FILE *fin = fopen(name, "r");
+	if(fin!=0) {
+		isc->cur_file_idx++;
+		isc->load_files[isc->cur_file_idx]->port->t= PORT_FILE | PORT_INPUT;
+		isc->load_files[isc->cur_file_idx]->port->f.file = fin;
+		isc->load_files[isc->cur_file_idx]->port->f.curr_line = 0;
+		if(name) isc->load_files[isc->cur_file_idx]->port->f.name = strdup(name);
+		isc->in_port= isc->load_files + isc->cur_file_idx;
+	}
+	return fin != 0;
+}
+
+static void pop_load_file(IScheme *isc) {
+	if(isc->cur_file_idx != 0) {
+		port_close(isc, isc->in_port, PORT_INPUT);
+		isc->cur_file_idx--;
+		isc->in_port = isc->load_files + isc->cur_file_idx;
+	}
+}
+
+void write_char(IScheme *isc, int c) {
+	Port *pt = isc->out_port->port;
+	if(pt->t & PORT_FILE) {
+		fputc(c, pt->f.file);
+	} else {
+		if(pt->s.cur < pt->s.end) {
+			*pt->s.cur++ = c;
+		} else {
+		    IError("write char out of range.");
+		}
+	}
+}
+
+void write_string(IScheme *isc, String s) {
+	Port *pt= isc->out_port->port;
+	int len = strlen(s);
+	if(pt->t & PORT_FILE) {
+		fwrite(s, 1, len, pt->f.file);
+	} else {
+		for(; len; len--) {
+			if(pt->s.cur < pt->s.end) {
+				*pt->s.curr++=*s++;
+			} else {
+                IError("write string out of range.");
+			}
+		}
+	}
+}
+
 static inline int get_char(Cell *in) {
     Port *p = in->port;
     if (p->t & PORT_EOF) return EOF;
@@ -251,10 +352,10 @@ static inline void unget_char(Cell *out, int c) {
 
 static inline int skip_line(IScheme *isc) {
     int c = 0, n = 0;
-    while (c = get_char(isc->inPort) != EOF && c != '\n') ++n;
+    while (c = get_char(isc->in_port) != EOF && c != '\n') ++n;
     if (c == '\n') {
-        if (isc->loadFiles[isc->curFileIdx] && isc->loadFiles[isc->curFileIdx]->port->t & PORT_FILE)
-            ++isc->loadFiles[isc->curFileIdx]->port->f.curLine;
+        if (isc->load_files[isc->cur_file_idx] && isc->load_files[isc->cur_file_idx]->port->t & PORT_FILE)
+            ++isc->load_files[isc->cur_file_idx]->port->f.curLine;
         return ++n;
     }
     return EOF;
@@ -262,7 +363,7 @@ static inline int skip_line(IScheme *isc) {
 
 static int skip_comment(IScheme *isc) {
     int n = 0;
-    int c = get_char(isc->inPort);
+    int c = get_char(isc->in_port);
     if (c == EOF) return EOF;
     if (c == ';') {
         ++n;
@@ -270,11 +371,11 @@ static int skip_comment(IScheme *isc) {
         if (c == EOF) return EOF;
         n += c;
     } else if (c == '#') {
-        c = get_char(isc->inPort);
+        c = get_char(isc->in_port);
         if (c == EOF) return EOF;
         if (c != '!')  {
-            unget_char(isc->inPort, c);
-            unget_char(isc->inPort, '#');
+            unget_char(isc->in_port, c);
+            unget_char(isc->in_port, '#');
             return 0;
         }
         n += 2;
@@ -282,7 +383,7 @@ static int skip_comment(IScheme *isc) {
         if (c == EOF) return EOF;
         n += c;
     } else {
-        unget_char(isc->inPort, c);
+        unget_char(isc->in_port, c);
         return 0;
     }
     if (c == '\n') return ++n;
@@ -292,10 +393,10 @@ static int skip_comment(IScheme *isc) {
 static int skip_space(IScheme *isc) {
     int c = 0, n = 0, curLine = 0;
     do {
-        c = get_char(isc->inPort);
+        c = get_char(isc->in_port);
         if (c == '\n') ++curLine;
         else if (c == ';' || c == '#') {
-            unget_char(isc->inPort, c);
+            unget_char(isc->in_port, c);
             c = skip_comment(isc);
             if (c <= 0) return n;
             n += c;
@@ -303,19 +404,26 @@ static int skip_space(IScheme *isc) {
         }
         ++n;
     } while(isspace(c));
-    if (isc->loadFiles[isc->curFileIdx] && isc->loadFiles[isc->curFileIdx]->port->t & PORT_FILE)
-        isc->loadFiles[isc->curFileIdx]->port->f.curLine += curLine;
+    if (isc->load_files[isc->cur_file_idx] && isc->load_files[isc->cur_file_idx]->port->t & PORT_FILE)
+        isc->load_files[isc->cur_file_idx]->port->f.curLine += curLine;
     if (c != EOF) {
-        unget_char(isc->inPort, c);
+        unget_char(isc->in_port, c);
         return --n;
     }
     return EOF;
 }
 
+static Cell *reverse(IScheme *isc, Cell *old) {
+    Cell *new = CELL_NIL;
+    for (; is_pair(old); old = cdr(old))
+        new = cons(isc, car(old), new);
+    return new;
+}
+
 static int get_token(IScheme *isc) {
     int c = skip_space(isc);
     if (c == EOF) return TOK_EOF;
-    switch (c = get_char(isc->inPort)) {
+    switch (c = get_char(isc->in_port)) {
     case EOF: return TOK_EOF;
     case '(': return TOK_LPAREN;
     case ')': return TOK_RPAREN;
@@ -325,25 +433,25 @@ static int get_token(IScheme *isc) {
     case '}': return TOK_RBRACE;
     case '.':
         if (skip_space(isc) > 0) return TOK_DOT;
-        unget_char(isc->inPort, c);
+        unget_char(isc->in_port, c);
         return TOK_ATOM;
     case '\'': return TOK_QUOTE;
     case '`': return TOK_QQUOTE;
     case '"': return TOK_DQUOTE;
     case ',':
-        c = get_char(isc->inPort);
+        c = get_char(isc->in_port);
         if (c == '@') return TOK_UNQUOTE_SPLICING;
-        else unget_char(isc->inPort, c);
+        else unget_char(isc->in_port, c);
         return TOK_UNQUOTE;
     case '#':
-        c = get_char(isc->inPort);
+        c = get_char(isc->in_port);
         if (c == '(') return TOK_VECTOR;
         else if (c == '!') {
             c = skip_line(isc);
             if (c == EOF) return TOK_EOF;
             return get_token(isc);
         } else if (strchr("tfeibodx\\", c)) {
-            unget_char(isc->inPort, c);
+            unget_char(isc->in_port, c);
             return TOK_CONST;
         }
         IError("bad syntax '#%c'.\n", c);
@@ -353,14 +461,14 @@ static int get_token(IScheme *isc) {
         if (c == EOF) return TOK_EOF;
         return get_token(isc);
     default:
-        unget_char(isc->inPort, c);
+        unget_char(isc->in_port, c);
         return TOK_ATOM;
     }
 }
 
 static Cell *read_cell(IScheme *isc)
 {
-    int t = get_token(isc->inPort);
+    int t = get_token(isc->in_port);
     if (t == TOK_EOF) {
         IError("end of file.");
         return CELL_EOF;
@@ -396,8 +504,8 @@ static Cell *error_helper(IScheme *isc, String fmt, ...)
     va_list ap;
     va_start(ap, fmt);
 
-    Port *in = isc->loadFiles[isc->curFileIdx]->port;
-    Port *out = isc->outPort->port;
+    Port *in = isc->load_files[isc->cur_file_idx]->port;
+    Port *out = isc->out_port->port;
     fprintf(out->f.file, "*Error*: ");
     if (in->t & PORT_FILE && in->f.file != stdin) {
         fprintf(out->f.file, "file \"%s\", line %d\n", out->f.name, out->f.curLine);
@@ -428,9 +536,18 @@ static Cell *op_func0(IScheme *isc, int op)
 {
     Cell *c;
     switch (op) {
-    case OP_LOAD:
-        break;
     case OP_REPL_LOOP:
+        if (isc->in_port->port->t & PORT_EOF) {
+            if (isc->cur_file_idx == 0)
+                return CELL_FALSE;
+            pop_load_file(isc);
+            popOp(isc, isc->retnv);
+        }
+        if (is_interactive(isc)) {
+            isc->envir = isc->global_envir;
+            isc->contis = CELL_NIL;
+            write_string("\n>> ");
+        }
         pushOp(isc, OP_REPL_LOOP, isc->args, isc->envir);
         pushOp(isc, OP_REPL_PRINT, isc->args, isc->envir);
         pushOp(isc, OP_REPL_EVAL, isc->args, isc->envir);
@@ -441,7 +558,35 @@ static Cell *op_func0(IScheme *isc, int op)
         isc->code = isc->retnv;
         gotoOp(isc, OP_EVAL);
     case OP_REPL_PRINT:
+        if (is_interactive(isc)) {
+            
+        } else {
+            popOp(isc, isc->retnv);
+        }
         break;
+    case OP_DEF0:
+        if (!is_pair(isc->code))
+            Error(isc, "missing expression after identifier.");
+        if (is_immutable(car(isc->code)))
+            Error(isc, "unable to alter immutable atom.");
+        if (is_pair(c = car(isc->code))) {
+            Cell *e = cadr(isc->code);
+            for (; is_pair(c); c = car(c)) {
+                e = cons(isc->sym_lambda, cons(cadr(c), e));
+            }
+            isc->code = e;
+        } else if (is_symbol(c = car(isc->code))) {
+            isc->code = cadr(isc->code);
+        } else {
+            Error(isc, "invalid define expression.");
+        }
+        pushOp(isc, OP_DEF1, CELL_NIL, c)
+        gotoOp(isc, OP_EVAL);
+    case OP_DEF1:
+        mk_envir(&isc->envir, isc->code, isc->retnv);
+        popOp(isc, CELL_NIL);
+    case OP_LAMBDA:
+        popOp(isc, mk_lambda(isc->code, isc->envir));        
     case OP_EVAL:
         if (is_symbol(isc->code)) {
             c = assq(isc->code, isc->envir);
@@ -450,9 +595,9 @@ static Cell *op_func0(IScheme *isc, int op)
         } else if (is_pair(isc->code)) {
             if (is_syntax(c = car(isc->code))) {
                 isc->code = cdr(isc->code);
-                gotoOp(isc, );
+                gotoOp(isc, c->chr);
             } else {
-                pushOp(isc, OP_EARG0, CELL_NIL, isc->code);
+                pushOp(isc, OP_EVAL_OPC, CELL_NIL, isc->code);
                 isc->code = car(isc->code);
                 gotoOp(isc, OP_EVAL);
             }
@@ -460,17 +605,80 @@ static Cell *op_func0(IScheme *isc, int op)
             popOp(isc, isc->code);
         }
         break;
-    case OP_EARG0:
+    case OP_EVAL_OPC:
+        if (is_macro(isc->retnv)) {
+            // TODO
+        } else {
+            isc->code = cdr(isc->code);
+            gotoOp(isc, OP_EVAL_ARGS);
+        }
+        break;
+    case OP_EVAL_ARGS:
+        isc->args = cons(isc, isc->retnv, isc->args);
+        if (is_pair(isc->code)) {
+            pushOp(isc, OP_EVAL_ARGS, isc->args, cdr(isc->code));
+            isc->code = car(isc->code);
+            isc->args = CELL_NIL;
+            gotoOp(isc, OP_EVAL);
+        } else {
+            isc->args = reverse(isc, isc->args);
+            isc->code = car(isc->args);
+            isc->args = cdr(isc->args);
+            gotoOp(isc, OP_APPLY);
+        }
         break;
     case OP_APPLY:
-        break;
+        if (is_syntax(isc->code) || is_iproc(isc->code)) {
+            gotoOp(isc, isc->code->chr);
+        } else if (is_eproc(isc->code)) {
+            popOp(isc, isc->code->proc(isc, isc->args));
+        } else if (is_proc(isc->code) || is_macro(isc->code) || is_promise(isc->code)) {
+            Cell **env = &closure_env(isc->code);
+            Cell *fp = car(closure_code(isc->code));
+            Cell *ap = isc->args;
+            for (; is_pair(fp); fp = cdr(fp), ap = cdr(ap)) {
+                if (ap == CELL_NIL) Error(isc, "too few arguments."); 
+                mk_envir(env, car(fp), car(ap));
+            }
+            if (fp == CELL_NIL && ap != CELL_NIL) Error(isc, "too much arguments.");
+            if (is_symbol(fp)) mk_envir(env, fp, ap);
+            isc->code = cdr(closure_code(isc->code));
+            isc->args = CELL_NIL;
+            gotoOp(isc, OP_EVAL_LIST);
+        } else if (is_conti(isc->code)) {
+            popOp(isc, isc->args != CELL_NIL ? car(isc->args) : CELL_NIL);
+        } 
+        Error(isc, "illegal procudure.");
+    case OP_EVAL_LIST:
+        if (!is_pair(isc->code)) popOp(isc, isc->code);
+        if (cdr(isc->code) != CELL_NIL) pushOp(isc, OP_EVAL_LIST, CELL_NIL, cdr(isc->code));
+        isc->code = car(isc->code);
+        gotoOp(isc, OP_EVAL);
     case OP_ERROR:
-        break;
-	}
+        gotoOp(isc, OP_REPL_LOOP);
+    }
     return CELL_TRUE;
 }
 
 static Cell *op_func1(IScheme *isc, int op)
+{
+    switch (op) {
+    case OP_LOAD:
+        break;
+
+    }
+    return CELL_EOF;
+}
+
+static Cell *op_func2(IScheme *isc, int op)
+{
+    switch (op) {
+
+    }
+    return CELL_EOF;
+}
+
+static Cell *op_func3(IScheme *isc, int op)
 {
     switch (op) {
 
@@ -507,30 +715,23 @@ static Cell *assq(Cell *key, Cell *list)
     return NULL;
 }
 
-static Cell* mk_syntax(IScheme *isc, String s)
+static Cell *find_envir(Cell *env, Cell *s)
 {
-    Cell *c = internal(isc, s);
-    c->t = SYNTAX;
-    return c;
-}
-
-static Cell *find_envir(IScheme *isc, Cell *s)
-{
-    for (Cell *e = isc->globalEnvir; is_pair(e); e = cdr(isc->globalEnvir)) {
+    for (Cell *e = env; is_pair(e); e = cdr(e)) {
         if (is_pair(car(e)) && caar(e) == s)
             return car(e);
     }
-    return NULL;
+    return CELL_NIL;
 }
 
-static Cell* mk_envir(IScheme *isc, Cell *s, Cell *v)
+static Cell* mk_envir(Cell **env, Cell *s, Cell *v)
 {
     Cell *e = NULL;
-    if ((e = find_envir(isc, s))) {
+    if ((e = find_envir(*env, s))) {
         rplacd(e, v);
     } else {
         e = cons(s, v);
-        isc->globalEnvir = cons(e, isc->globalEnvir);
+        **env = cons(e, *env);
     }
     return e;
 }
@@ -765,9 +966,9 @@ Error:
 static Cell *read_atom(IScheme *isc, int c)
 {
     Number *real = NULL;
-    unget_char(isc->inPort, c);
+    unget_char(isc->in_port, c);
     char *p = isc->buff;
-    int totalLen = read_upto(isc->inPort, p, DELIMITERS);
+    int totalLen = read_upto(isc->in_port, p, DELIMITERS);
 
     if (totalLen <= 0) {
         IError("read error.");
@@ -868,8 +1069,8 @@ static Cell *read_atom(IScheme *isc, int c)
                     goto Error1;
                 }
                 num->t = NUMBER_COMPLEX;
-                num->cx.rl = real;
-                num->cx.im = imag;
+                num->cx.rl = 0;
+                num->cx.im = real;
                 return mk_number(num);
             } else {
                 goto MkSymbol;
@@ -897,7 +1098,7 @@ Error1:
 static Cell *read_string(IScheme *isc, int q)
 {
     char *buf = isc->buff;
-    Cell *port = isc->inPort;
+    Cell *port = isc->in_port;
     int idx = 0;
     int c;
     while (idx < STR_BUF_SIZE && (c = get_char(port)) > 0 && c != q)
@@ -967,7 +1168,7 @@ static Cell *read_list(IScheme *isc, int c)
     }
 
     int d;
-    Cell *port = isc->inPort;
+    Cell *port = isc->in_port;
     for (;;) {
         d = get_token(isc);
         if (d == TOK_EOF) {
@@ -1021,25 +1222,30 @@ static void init_readers()
 
 static void isc_init(FILE *in, String name)
 {
-    g_true.t = BOOLEAN;
-    g_true.chr = TRUE;
-    g_false.t = BOOLEAN;
-    g_false.chr = FALSE;
+    gp_isc = malloc(sizeof(IScheme));
+    if (!gp_isc) {
+        IError("no memory.");
+        return;
+    }
+    
+    gp_isc->free_cell_count = 0;
+    gp_isc->free_cells = NULL;
+    gp_isc->last_seg = -1;
+    gp_isc->global_envir = NULL;
 
-    gp_isc->freeCellCount = 0;
-    gp_isc->freeCells = NULL;
-    gp_isc->lastSeg = -1;
-    gp_isc->globalEnvir = NULL;
+    gp_isc->in_port = mk_port(in, name);
+    gp_isc->out_port = mk_port(stdout, NULL);
+    gp_isc->sym_lambda = internal(gp_isc, "lambda");
+    
+    init_readers();
     seg_alloc(gp_isc, 3);
 
-    gp_isc->inPort = mk_port(in, name);
-    gp_isc->outPort = mk_port(stdout, NULL);
-
-    init_readers();
+    Cell *c = CELL_NIL;
     for (int i = 0; i < sizeof(g_opcodes)/sizeof(OpCode); i++) {
         if (g_opcodes[i].name) {
-            if (g_opcodes[i].t == SYNTAX) mk_syntax(gp_isc, g_opcodes[i].name);
-            mk_envir(gp_isc, internal(gp_isc, g_opcodes[i].name), mk_long(i));
+            if (g_opcodes[i].t == SYNTAX) c = mk_syntax(i);
+            else c = mk_iproc(i);
+            mk_envir(&gp_isc->global_envir, internal(gp_isc, g_opcodes[i].name), c);
         }
     }
 }
@@ -1048,7 +1254,7 @@ static void isc_repl()
 {
     gp_isc->op = OP_REPL_LOOP;
     for (;;) {
-        if (g_opcodes[gp_isc->op].func(gp_isc, gp_isc->op) == CELL_ERR)
+        if (g_opcodes[gp_isc->op].func(gp_isc, gp_isc->op) != CELL_TRUE)
             break;
     }
 }
@@ -1065,14 +1271,32 @@ int main(int argc, char *argv[])
     if (argc == 1) {
         in = stdin;
     } else {
-        in = fopen(argv[1], "r");
-        name = argv[1];
-        if (!in) {
-            IError("cant't open file '%s'.", name);
-            return -1;
+        if (!strcmp(argv[1], "-h")  || !strcmp(argv[1], "--help")) {
+            printf("iScheme v0.1 by yjq\n");
+            printf("Options and arguments:\n");
+            printf("-\t\t: program read from stdin\n");
+            printf("file\t\t: program read from file");
+            printf("-h\t\t: print this help message and exit (also --help)");
+            printf("-v\t\t: iScheme's version (also --version)");
+            return 0;
+        } else if (!strcmp(argv[1], "-v") || strcmp(argv[1], "--version")) {
+            printf("iScheme v0.1\n");
+            return 0;
+        } else if (!strcmp(argv[1], "-")) {
+            in = stdin;            
+        } else {
+            in = fopen(argv[1], "r");
+            name = argv[1];
+            if (!in) {
+                IError("cant't open file '%s'.", name);
+                return -1;
+            }
         }
     }
 
+    if (in == stdin) {
+        printf("iScheme v0.1 by yjq\n");
+    }
     isc_init(in, name);
     isc_repl();
     isc_finalize();

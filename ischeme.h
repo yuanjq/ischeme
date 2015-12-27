@@ -31,19 +31,22 @@ typedef struct _IScheme IScheme;
 
 typedef Cell* (*OpFunc)(IScheme*, int);
 typedef Cell*(*Reader)(IScheme*, int);
+typedef Cell*(*EProc)(IScheme*, Cell*);
 
-#define TRUE              1
-#define FALSE             0
-#define SEGS_NUM          100
-#define SEG_CELLS_NUM     5000
-#define SEG_MEM_SIZE      (SEG_CELLS_NUM * sizeof(Cell))
-#define MAX_LOAD_FILES    256
-#define STR_BUF_SIZE      1024
+#define TRUE                1
+#define FALSE               0
+#define SEGS_NUM            100
+#define SEG_CELLS_NUM       5000
+#define SEG_MEM_SIZE        (SEG_CELLS_NUM * sizeof(Cell))
+#define MAX_LOAD_FILES      256
+#define STR_BUF_SIZE        1024
 
-#define TYPE_MASK         0x0000FFFF
-#define MARK_IMMUTABLE    0x00010000
-#define MARK_REFERENCE    0x00020000
-
+#define T_MASK              0x0000FFFF
+#define M_MASK              0xFFFF0000
+#define M_IMMUTABLE         0x00010000
+#define M_REFERENCE         0x00020000
+#define T(c)                (c->t & T_MASK)
+#define M(c)                (c->t & M_MASK)
 
 enum Ret {
     RET_FAILED = -1,
@@ -65,8 +68,11 @@ enum Type {
     EXPR,
     LAMBDA,
     PROC,
+    IPROC,
+    EPROC,
     MACRO,
     CONTI,
+    PROMISE,
 };
 
 enum Token {
@@ -180,21 +186,22 @@ struct _Cell {
         Pair    *pair;
         Port    *port;
         Conti   *conti;
+        EProc   *proc;
         Cell    *next;
     };
 };
 
 struct _IScheme {
-    int lastSeg;
-    int freeCellCount;
+    int last_seg;
+    int free_cell_count;
     Cell *segs[SEGS_NUM];
-    Cell *freeCells;
-    Cell *globalEnvir;
+    Cell *free_cells;
+    Cell *global_envir;
     Cell *symbols;
-    Cell *inPort;
-    Cell *outPort;
-    Cell *loadFiles[MAX_LOAD_FILES];
-    int curFileIdx;
+    Cell *in_port;
+    Cell *out_port;
+    Cell *load_files[MAX_LOAD_FILES];
+    int cur_file_idx;
 
     Op op;
     Cell *retnv;
@@ -203,6 +210,8 @@ struct _IScheme {
     Cell *code;
     Cell *contis;
     char buff[STR_BUF_SIZE];
+
+    Cell *sym_lambda;
 };
 
 struct _OpCode {

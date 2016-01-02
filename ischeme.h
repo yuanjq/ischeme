@@ -1,16 +1,19 @@
 #ifndef ISCHEME_H
 #define ISCHEME_H
 
-#define IWarning(fmt, ...)  printf("*Warning*: " fmt, ##__VA_ARGS__)
-#define IError(fmt, ...)    printf("*Error*: " fmt, ##__VA_ARGS__)
-#define IDEBUG_MORE
+//#define IDEBUG_MORE
 
 #ifdef  IDEBUG_MORE
-#define IMessage(fmt, ...)  printf("*Message*: " fmt, ##__VA_ARGS__)
-#define ITraceEnter()     IMessage("Func %s enter.", __FUNCTION__)
-#define ITraceLeave()     IMessage("Func %s leave.", __FUNCTION__)
+#define IMessage(fmt, ...)  printf("*Message*: " fmt"\n", ##__VA_ARGS__)
+#define IWarning(fmt, ...)  printf("*Warning*: " fmt"\n", ##__VA_ARGS__)
+#define IError(fmt, ...)    printf("*Error*[F:%s][L:%d]: " fmt"\n", __FUNCTION__, __LINE__, ##__VA_ARGS__)
+#define ITraceEnter()       IMessage("Func %s enter.", __FUNCTION__)
+#define ITraceLeave()       IMessage("Func %s leave.", __FUNCTION__)
 #else
 #define IMessage(fmt, ...)
+#define IWarning(fmt, ...)
+#define IMessage(fmt, ...)
+#define IError(fmt, ...)
 #define ITraceEnter()
 #define ITraceLeave()
 #endif
@@ -18,7 +21,7 @@
 typedef unsigned char   bool;
 typedef unsigned char   uint8;
 typedef unsigned int    Char;
-typedef const char*     String;
+typedef char*           String;
 typedef const char*     Symbol;
 
 typedef struct _Number  Number;
@@ -28,6 +31,14 @@ typedef struct _Conti   Conti;
 typedef struct _Cell    Cell;
 typedef struct _OpCode  OpCode;
 typedef struct _IScheme IScheme;
+
+typedef enum _Op            Op;
+typedef enum _Radix         Radix;
+typedef enum _Exactness     Exactness;
+typedef enum _NumberType    NumberType;
+typedef enum _PortType      PortType;
+typedef enum _Token         Token;
+typedef enum _Type          Type;
 
 typedef Cell* (*OpFunc)(IScheme*, int);
 typedef Cell*(*Reader)(IScheme*, int);
@@ -53,7 +64,7 @@ enum Ret {
     RET_SUCCESSED = 0
 };
 
-enum Type {
+enum _Type {
     FREE = 0,
     CHAR,
     BOOLEAN,
@@ -75,7 +86,7 @@ enum Type {
     PROMISE,
 };
 
-enum Token {
+enum _Token {
     TOK_EOF = -1,
     TOK_ATOM,
     TOK_LPAREN,
@@ -95,7 +106,7 @@ enum Token {
     TOK_MAX
 };
 
-enum PortType {
+enum _PortType {
     PORT_FREE   = 0,
     PORT_INPUT  = 1<<1,
     PORT_OUTPUT = 1<<2,
@@ -105,20 +116,20 @@ enum PortType {
     PORT_EOF    = 1<<6,
 };
 
-enum NumberType {
+enum _NumberType {
     NUMBER_LONG,
     NUMBER_DOUBLE,
     NUMBER_FRACTION,
     NUMBER_COMPLEX,
 };
 
-enum Exactness {
+enum _Exactness {
     NO_EXACTNESS,
     INEXACT,
     EXACT
 };
 
-enum Radix {
+enum _Radix {
     NO_RADIX = 0,
     BIN = 2,
     OCT = 8,
@@ -126,7 +137,7 @@ enum Radix {
     HEX = 16
 };
 
-enum Op {
+enum _Op {
     #define _OPCODE(f, n, t, o) o,
     #include "opcodes.h"
     #undef _OPCODE
@@ -154,8 +165,8 @@ struct _Port {
     union {
         struct {
             FILE *file;
-            char *name;
-            int curLine;
+            String name;
+            int curr_line;
         } f;
         struct {
           char *start;
@@ -186,7 +197,7 @@ struct _Cell {
         Pair    *pair;
         Port    *port;
         Conti   *conti;
-        EProc   *proc;
+        EProc   proc;
         Cell    *next;
     };
 };
@@ -198,8 +209,8 @@ struct _IScheme {
     Cell *free_cells;
     Cell *global_envir;
     Cell *symbols;
-    Cell *in_port;
-    Cell *out_port;
+    Cell *inport;
+    Cell *outport;
     Cell *load_files[MAX_LOAD_FILES];
     int cur_file_idx;
 
@@ -212,6 +223,7 @@ struct _IScheme {
     char buff[STR_BUF_SIZE];
 
     Cell *sym_lambda;
+    Cell *sym_quote;
 };
 
 struct _OpCode {

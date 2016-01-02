@@ -1,2 +1,2 @@
 # ischeme
-scheme r5rs
+scheme r5rs.

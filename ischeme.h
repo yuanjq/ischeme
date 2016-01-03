@@ -4,9 +4,9 @@
 //#define IDEBUG_MORE
 
 #ifdef  IDEBUG_MORE
-#define IMessage(fmt, ...)  printf("*Message*: " fmt"\n", ##__VA_ARGS__)
-#define IWarning(fmt, ...)  printf("*Warning*: " fmt"\n", ##__VA_ARGS__)
-#define IError(fmt, ...)    printf("*Error*[F:%s][L:%d]: " fmt"\n", __FUNCTION__, __LINE__, ##__VA_ARGS__)
+#define IMessage(fmt, ...)  printf("*Message*: "fmt"\n", ##__VA_ARGS__)
+#define IWarning(fmt, ...)  printf("*Warning*: "fmt"\n", ##__VA_ARGS__)
+#define IError(fmt, ...)    printf("*Error*[F:%s][L:%d]: "fmt"\n", __FUNCTION__, __LINE__, ##__VA_ARGS__)
 #define ITraceEnter()       IMessage("Func %s enter.", __FUNCTION__)
 #define ITraceLeave()       IMessage("Func %s leave.", __FUNCTION__)
 #else
@@ -77,7 +77,6 @@ enum _Type {
     VECTOR,
     PORT,
     EXPR,
-    LAMBDA,
     PROC,
     IPROC,
     EPROC,
@@ -88,7 +87,7 @@ enum _Type {
 
 enum _Token {
     TOK_EOF = -1,
-    TOK_ATOM,
+    TOK_SYMBOL,
     TOK_LPAREN,
     TOK_LBRACKET,
     TOK_LBRACE,
@@ -141,7 +140,7 @@ enum _Op {
     #define _OPCODE(f, n, t, o) o,
     #include "opcodes.h"
     #undef _OPCODE
-    OP_MAX
+    OPCODE_MAX
 };
 
 struct _Number {

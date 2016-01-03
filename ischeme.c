@@ -11,6 +11,7 @@
 #define CELL_FALSE      &g_false
 #define CELL_NIL        &g_nil
 #define CELL_EOF        &g_eof
+#define CELL_UNDEF      &g_undef
 #define CELL_ERR        (Cell*)-1
 #define DELIMITERS      "()[]{}\";\f\t\v\n\r "
 
@@ -40,6 +41,7 @@ static Cell g_true = {t:BOOLEAN, {chr:TRUE}};
 static Cell g_false = {t:BOOLEAN, {chr:FALSE}};
 static Cell g_nil;
 static Cell g_eof;
+static Cell g_undef;
 
 static const char *ascii32[32]={
 	"nul",
@@ -76,11 +78,6 @@ static const char *ascii32[32]={
 	"us"
 };
 
-static void gc(IScheme *isc);//, Cell *args, Cell *env);
-static void print_cell(IScheme *isc, Cell *c);
-static Cell* mk_envir(Cell **env, Cell *s, Cell *v);
-static Cell *assq(Cell *key, Cell *list);
-
 
 /************** memery manager ************/
 static int seg_alloc(IScheme *isc, int num)
@@ -104,6 +101,13 @@ static int seg_alloc(IScheme *isc, int num)
     return num;
 }
 
+static void gc(IScheme *isc)//, Cell *args, Cell *env)
+{
+    ITraceEnter();
+    // TODO:
+    ITraceLeave();
+}
+
 static Cell *cell_alloc()//Cell *args, Cell *env)
 {
     if (!gp_isc->free_cells) {
@@ -117,13 +121,6 @@ static Cell *cell_alloc()//Cell *args, Cell *env)
     gp_isc->free_cells = c->next;
     --gp_isc->free_cell_count;
     return c;
-}
-
-static void gc(IScheme *isc)//, Cell *args, Cell *env)
-{
-    ITraceEnter();
-    // TODO:
-    ITraceLeave();
 }
 
 
@@ -214,8 +211,7 @@ static Cell *mk_char(Char chr) {
     return c;
 }
 
-static Cell *mk_long(long n)
-{
+static Cell *mk_long(long n) {
     Cell *c = NULL;
     Number *num = malloc(sizeof(Number));
     if (num) {
@@ -230,8 +226,7 @@ static Cell *mk_long(long n)
     return c;
 }
 
-static Cell *mk_double(double n)
-{
+static Cell *mk_double(double n) {
     Cell *c = NULL;
     Number *num = malloc(sizeof(Number));
     if (num) {
@@ -246,8 +241,7 @@ static Cell *mk_double(double n)
     return c;
 }
 
-static Cell *mk_number(Number *num)
-{
+static Cell *mk_number(Number *num) {
     Cell *c = cell_alloc();
     if (c) {
         c->t = NUMBER;
@@ -256,8 +250,7 @@ static Cell *mk_number(Number *num)
     return c;
 }
 
-static Cell *mk_symbol(String s)
-{
+static Cell *mk_symbol(String s) {
     Cell *c = cell_alloc();
     if (c) {
         c->t = SYMBOL;
@@ -266,14 +259,13 @@ static Cell *mk_symbol(String s)
     return c;
 }
 
-static Cell *mk_lambda(Cell *a, Cell *e)
-{
+static Cell *mk_proc(Cell *a, Cell *e) {
     Cell *c = NULL;
     Pair *pair = malloc(sizeof(Pair));
     if (pair) {
         c = cell_alloc();
         if (c) {
-            c->t = LAMBDA;
+            c->t = PROC;
             c->pair = pair;
             pair->a = a;
             pair->d = e;
@@ -282,8 +274,7 @@ static Cell *mk_lambda(Cell *a, Cell *e)
     return c;
 }
 
-static Cell *mk_port(FILE *f, String name, int t)
-{
+static Cell *mk_port(FILE *f, String name, int t) {
     Cell *c = NULL;
     Port *port = (Port*)malloc(sizeof(Port));
     if (port) {
@@ -301,8 +292,7 @@ static Cell *mk_port(FILE *f, String name, int t)
     return c;
 }
 
-static Cell *mk_syntax(int op)
-{
+static Cell *mk_syntax(int op) {
     Cell *c = cell_alloc();
     if (c) {
         c->t = SYNTAX;
@@ -311,8 +301,7 @@ static Cell *mk_syntax(int op)
     return c;
 }
 
-static Cell *mk_iproc(int op)
-{
+static Cell *mk_iproc(int op) {
     Cell *c = cell_alloc();
     if (c) {
         c->t = IPROC;
@@ -321,8 +310,7 @@ static Cell *mk_iproc(int op)
     return c;
 }
 
-static Cell *mk_conti(IScheme *isc)
-{
+static Cell *mk_conti(IScheme *isc) {
     return 0;
 }
 
@@ -362,36 +350,36 @@ static void pop_load_file(IScheme *isc) {
 	}
 }
 
-int write_char(IScheme *isc, int c) {
-	Port *pt = isc->outport->port;
+int write_char(Cell *out, int c) {
+	Port *pt = out->port;
 	if(pt->t & PORT_FILE) {
 		return fputc(c, pt->f.file);
 	} else {
 		if(pt->s.end <= pt->s.cur) {
-           IError("write char out of range.\n");
+           IError("write char out of range.");
            return -1;
         }
 		*pt->s.cur++ = c;
         return c;
 	}
-    IError("invalid out port.\n");
+    IError("invalid out port.");
     return -1;
 }
 
-int write_string(IScheme *isc, String s) {
-	Port *pt= isc->outport->port;
+int write_string(Cell *out, String s) {
+	Port *pt= out->port;
 	int len = strlen(s);
 	if (pt->t & PORT_FILE) {
 		return fwrite(s, 1, len, pt->f.file);
 	} else if (pt->t & PORT_STRING) {
 	    if (len > pt->s.end - pt->s.cur) {
-           IError("write string out of range.\n");
+           IError("write string out of range.");
            return -1; 
         }
 		for(; len; len--) *pt->s.cur++ = *s++;
         return len;
 	}
-    IError("invalid out port.\n");
+    IError("invalid out port.");
     return -1;
 }
 
@@ -505,7 +493,7 @@ static int get_token(IScheme *isc) {
     case '.':
         if (skip_space(isc) > 0) return TOK_DOT;
         unget_char(isc->inport, c);
-        return TOK_ATOM;
+        return TOK_SYMBOL;
     case '\'': return TOK_QUOTE;
     case '`': return TOK_QQUOTE;
     case '"': return TOK_DQUOTE;
@@ -523,9 +511,10 @@ static int get_token(IScheme *isc) {
             return get_token(isc);
         } else if (strchr("tfeibodx\\", c)) {
             unget_char(isc->inport, c);
+            unget_char(isc->inport, '#');
             return TOK_CONST;
         }
-        IError("bad syntax '#%c'.\n", c);
+        IError("bad syntax '#%c'.", c);
         return TOK_EOF;
     case ';':
         c = skip_line(isc);
@@ -533,12 +522,11 @@ static int get_token(IScheme *isc) {
         return get_token(isc);
     default:
         unget_char(isc->inport, c);
-        return TOK_ATOM;
+        return TOK_SYMBOL;
     }
 }
 
-static Cell *read_cell(IScheme *isc)
-{
+static Cell *read_cell(IScheme *isc) {
     int t = get_token(isc);
     if (t == TOK_EOF) {
         IError("end of file.");
@@ -547,8 +535,7 @@ static Cell *read_cell(IScheme *isc)
     return g_readers[t](isc, t);
 }
 
-static Cell *read_cell_by_token(IScheme *isc, int t)
-{
+static Cell *read_cell_by_token(IScheme *isc, int t) {
     if (t == TOK_EOF) {
         IError("end of file.");
         return CELL_EOF;
@@ -556,8 +543,7 @@ static Cell *read_cell_by_token(IScheme *isc, int t)
     return g_readers[t](isc, t);
 }
 
-static inline Cell *pop_op(IScheme *isc, Cell *v)
-{
+static inline Cell *pop_op(IScheme *isc, Cell *v) {
     if (!is_pair(isc->contis) || !is_conti(car(isc->contis)))
         return CELL_FALSE;
     Conti *conti = car(isc->contis)->conti;
@@ -570,8 +556,7 @@ static inline Cell *pop_op(IScheme *isc, Cell *v)
     return CELL_TRUE;
 }
 
-static Cell *error_helper(IScheme *isc, String fmt, ...)
-{
+static Cell *error_helper(IScheme *isc, String fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
 
@@ -583,12 +568,12 @@ static Cell *error_helper(IScheme *isc, String fmt, ...)
     }
     vfprintf(out->f.file, fmt, ap);
     va_end(ap);
+    fputc('\n', out->f.file);
     isc->op = OP_ERROR;
     return CELL_TRUE;
 }
 
-static void push_op(IScheme *isc, Op op, Cell *args, Cell *code)
-{
+static void push_op(IScheme *isc, Op op, Cell *args, Cell *code) {
     Conti *conti = (Conti*)malloc(sizeof(Conti));
     if (conti) {
         Cell *c = cell_alloc();
@@ -604,194 +589,39 @@ static void push_op(IScheme *isc, Op op, Cell *args, Cell *code)
     }
 }
 
-static Cell *op_func0(IScheme *isc, int op)
-{
-    IMessage("[F:%s][L:%d][O:%d]", __FUNCTION__, __LINE__, op);
-    Cell *c;
-    switch (op) {
-    case OP_REPL_LOOP:
-        if (isc->inport->port->t & PORT_EOF) {
-            if (isc->cur_file_idx == 0)
-                return CELL_FALSE;
-            pop_load_file(isc);
-            popOp(isc, isc->retnv);
-        }
-        if (is_interactive(isc)) {
-            isc->envir = isc->global_envir;
-            isc->contis = CELL_NIL;
-            write_string(isc, "\n>> ");
-        }
-        pushOp(isc, OP_REPL_LOOP, isc->args, isc->envir);
-        pushOp(isc, OP_REPL_PRINT, isc->args, isc->envir);
-        pushOp(isc, OP_REPL_EVAL, isc->args, isc->envir);
-        gotoOp(isc, OP_REPL_READ);
-    case OP_REPL_READ:
-        c = read_cell(isc);
-        if (c == CELL_EOF) {
-            gotoOp(isc, OP_ERROR);
-        }
-        popOp(isc, c);
-    case OP_REPL_EVAL:
-        isc->code = isc->retnv;
-        gotoOp(isc, OP_EVAL);
-    case OP_REPL_PRINT:
-        if (is_interactive(isc)) {
-            print_cell(isc, isc->retnv);
-        }
-        popOp(isc, isc->retnv);
-    case OP_DEF0:
-        if (!is_pair(isc->code))
-            Error(isc, "missing expression after identifier.");
-        if (is_immutable(car(isc->code)))
-            Error(isc, "unable to alter immutable atom.");
-        if (is_pair(c = car(isc->code))) {
-            Cell *e = cadr(isc->code);
-            for (; is_pair(c); c = car(c)) {
-                e = cons(isc->sym_lambda, cons(cadr(c), e));
-            }
-            isc->code = e;
-        } else if (is_symbol(c = car(isc->code))) {
-            isc->code = cadr(isc->code);
-        } else {
-            Error(isc, "invalid define expression.");
-        }
-        pushOp(isc, OP_DEF1, CELL_NIL, c);
-        gotoOp(isc, OP_EVAL);
-    case OP_DEF1:
-        mk_envir(&isc->envir, isc->code, isc->retnv);
-        popOp(isc, CELL_NIL);
-    case OP_LAMBDA:
-        popOp(isc, mk_lambda(isc->code, isc->envir));        
-    case OP_EVAL:
-        if (is_symbol(isc->code)) {
-            c = assq(isc->code, isc->envir);
-            if (is_pair(c)) popOp(isc, cdr(c));
-            else Error(isc, "unbound variable:%s\n", symbol(isc->code));
-        } else if (is_pair(isc->code)) {
-            if (is_syntax(c = car(isc->code))) {
-                isc->code = cdr(isc->code);
-                gotoOp(isc, c->chr);
-            } else {
-                pushOp(isc, OP_EVAL_OPC, CELL_NIL, isc->code);
-                isc->code = car(isc->code);
-                gotoOp(isc, OP_EVAL);
-            }
-        } else{
-            popOp(isc, isc->code);
-        }
-        break;
-    case OP_EVAL_OPC:
-        if (is_macro(isc->retnv)) {
-            // TODO
-        } else {
-            isc->code = cdr(isc->code);
-            gotoOp(isc, OP_EVAL_ARGS);
-        }
-        break;
-    case OP_EVAL_ARGS:
-        isc->args = cons(isc->retnv, isc->args);
-        if (is_pair(isc->code)) {
-            pushOp(isc, OP_EVAL_ARGS, isc->args, cdr(isc->code));
-            isc->code = car(isc->code);
-            isc->args = CELL_NIL;
-            gotoOp(isc, OP_EVAL);
-        } else {
-            isc->args = reverse(isc, isc->args);
-            isc->code = car(isc->args);
-            isc->args = cdr(isc->args);
-            gotoOp(isc, OP_APPLY);
-        }
-        break;
-    case OP_APPLY:
-        if (is_syntax(isc->code) || is_iproc(isc->code)) {
-            gotoOp(isc, isc->code->chr);
-        } else if (is_eproc(isc->code)) {
-            popOp(isc, isc->code->proc(isc, isc->args));
-        } else if (is_proc(isc->code) || is_macro(isc->code) || is_promise(isc->code)) {
-            Cell *env = closure_env(isc->code);
-            Cell *fp = car(closure_code(isc->code));
-            Cell *ap = isc->args;
-            for (; is_pair(fp); fp = cdr(fp), ap = cdr(ap)) {
-                if (ap == CELL_NIL) Error(isc, "too few arguments."); 
-                mk_envir(&env, car(fp), car(ap));
-            }
-            if (fp == CELL_NIL && ap != CELL_NIL) Error(isc, "too much arguments.");
-            if (is_symbol(fp)) mk_envir(&env, fp, ap);
-            isc->code = cdr(closure_code(isc->code));
-            isc->args = CELL_NIL;
-            gotoOp(isc, OP_EVAL_LIST);
-        } else if (is_conti(isc->code)) {
-            popOp(isc, isc->args != CELL_NIL ? car(isc->args) : CELL_NIL);
-        } 
-        Error(isc, "illegal procudure.");
-    case OP_EVAL_LIST:
-        if (!is_pair(isc->code)) popOp(isc, isc->code);
-        if (cdr(isc->code) != CELL_NIL) pushOp(isc, OP_EVAL_LIST, CELL_NIL, cdr(isc->code));
-        isc->code = car(isc->code);
-        gotoOp(isc, OP_EVAL);
-    case OP_ERROR:
-        gotoOp(isc, OP_REPL_LOOP);
-    }
-    return CELL_TRUE;
-}
-
-static Cell *op_func1(IScheme *isc, int op)
-{
-    switch (op) {
-    case OP_LOAD:
-        break;
-
-    }
-    return CELL_EOF;
-}
-
-static Cell *op_func2(IScheme *isc, int op)
-{
-    switch (op) {
-
-    }
-    return CELL_EOF;
-}
-
-static Cell *op_func3(IScheme *isc, int op)
-{
-    switch (op) {
-
-    }
-    return CELL_EOF;
-}
-
-static Cell *find_symbol(IScheme *isc, String s)
-{
+static Cell *find_symbol(IScheme *isc, String s) {
     for (Cell *c = isc->symbols; c; c = cdr(c)) {
         String sym = symbol(car(c));
         if (sym && !strcmp(sym, s))
           return car(c);
     }
-    return NULL;
+    return CELL_NIL;
 }
 
-static Cell* internal(IScheme *isc, String s)
-{
+static Cell* internal(IScheme *isc, String s) {
     Cell *c = NULL;
-    if ((c = find_symbol(isc, s))) return c;
+    if ((c = find_symbol(isc, s)) != CELL_NIL) return c;
     c = mk_symbol(s);
     isc->symbols = cons(c, isc->symbols);
     return c;
 }
 
-static Cell *assq(Cell *key, Cell *list)
-{
+static Cell *assq(Cell *key, Cell *list) {
 	String s = symbol(key);
     for (; is_pair(list); list = cdr(list)) {
         if (!strcmp(s, symbol(caar(list))))
             return car(list);
     }
-    return NULL;
+    return CELL_NIL;
 }
 
-static Cell *find_envir(Cell *env, Cell *s)
-{
+static int length(Cell *list) {
+    int len = 0;
+    for (; is_pair(list); list = cdr(list)) ++len;
+    return len;
+}
+
+static Cell *find_envir(Cell *env, Cell *s) {
     for (Cell *e = env; is_pair(e); e = cdr(e)) {
         if (is_pair(car(e)) && caar(e) == s)
             return car(e);
@@ -799,42 +629,36 @@ static Cell *find_envir(Cell *env, Cell *s)
     return CELL_NIL;
 }
 
-static Cell* mk_envir(Cell **env, Cell *s, Cell *v)
-{
-    Cell *e = NULL;
-    if ((e = find_envir(*env, s))) {
+static Cell* mk_envir(Cell *env, Cell *s, Cell *v) {
+    Cell *e = CELL_NIL;
+    if ((e = find_envir(cdr(env), s)) != CELL_NIL) {
         rplacd(e, v);
     } else {
         e = cons(s, v);
-        *env = cons(e, *env);
+        rplacd(env, cons(e, cdr(env)));
     }
     return e;
 }
 
-static Cell *read_illegal(IScheme *isc, int c)
-{
+static Cell *read_illegal(IScheme *isc, int c) {
     return CELL_EOF;
 }
 
-static inline int read_upto(Cell *port, char *upto, char *out, int size)
-{
+static inline int read_upto(Cell *port, char *upto, char *out, int size) {
     if (!is_port(port) || !out || size <= 0)
         return -1;
     int c;
     char *p = out;
 
     for (;;) {
-        if (p - out < size - 1) {
+        if (p - out < size) {
             if ((c = get_char(port)) < 0) {
-                IError("end of file.");
                 return -1;
             }
             if (strchr(upto, c))
                 break;
             *p++ = c;
         } else {
-            *p = '\0';
-            IError("symbol name too loog.");
             return -1;
         }
     }
@@ -843,8 +667,7 @@ static inline int read_upto(Cell *port, char *upto, char *out, int size)
     return p - out;
 }
 
-static bool start_with(char *s, char *w)
-{
+static bool start_with(char *s, char *w) {
     char *p1, *p2;
     p1 = s; p2 = w;
     while (*p1 != '\0' && *p2 != '\0' && *p1++ == *p2++);
@@ -854,13 +677,11 @@ static bool start_with(char *s, char *w)
         return FALSE;
 }
 
-static double xtod(char *num, int size, int radix)
-{
+static double xtod(char *num, int size, int radix) {
     double dnum = 0;
     int i, j, k=-1, n=0;
 
-    for (i=0; i < size; i++)
-    {
+    for (i=0; i < size; i++) {
         if (num[i] == '\0')
             break;
         if (num[i] == '.')
@@ -873,8 +694,7 @@ static double xtod(char *num, int size, int radix)
             ++k;
     }
     j = k>=0 ? j : i;
-    for(i = j-1; i >= 0; i--)
-    {
+    for(i = j-1; i >= 0; i--) {
         if (num[j-i-1] >= 'a' && num[j-i-1] <= 'f') {
             n = num[j-i-1] - 'a' + 10;
         } else if (num[j-i-1] >= 'A' && num[j-i-1] <= 'F') {
@@ -885,10 +705,8 @@ static double xtod(char *num, int size, int radix)
         dnum += n * pow(radix, i);
     }
 
-    if(k >= 0)
-    {
-        for(i=0; i<k; i++)
-        {
+    if(k >= 0) {
+        for(i=0; i<k; i++) {
             if (num[i+j+1] >= 'a' && num[i+j+1] <= 'f') {
                 n = num[i+j+1] - 'a' + 10;
             } else if (num[i+j+1] >= 'A' && num[i+j+1] <= 'F') {
@@ -902,160 +720,7 @@ static double xtod(char *num, int size, int radix)
     return dnum;
 }
 
-static Number *read_real(char **ppstart, char *pend, Exactness exact, Radix radix)
-{
-    Number *number = NULL;
-    char *p = *ppstart;
-    int c = *p;
-    uint8 sign = 0;
-    int buflen = 0;
-    bool must_number = (exact != NO_EXACTNESS || radix != NO_RADIX);
-    bool find_num = FALSE;
-    bool find_dot = FALSE;
-    bool find_slash = FALSE;
-    char *buf = NULL;
-
-    if (pend - p >= STR_BUF_SIZE) {
-        goto Error;
-    }
-    buf = malloc(STR_BUF_SIZE);
-    if (!buf) {
-        goto Error;
-    }
-
-    if (c == '+') {
-        sign = 1;
-        ++p;
-    } else if (c == '-') {
-        sign = -1;
-        ++p;
-    }
-
-    char *pstart = p;
-    while (p < pend && (c = *p) != '\0') {
-        if (c == '.') {
-            if (find_dot || find_slash) {
-                goto IsSym;
-            }
-            find_dot = TRUE;
-        } else if (c == '/') {
-            if (find_dot || find_slash || !find_num) {
-                goto IsSym;
-            }
-            buflen = p - pstart + 1;
-            memcpy(buf, pstart, buflen - 1);
-            buf[buflen - 1] = '\0';
-            pstart = p + 1;
-            find_slash = TRUE;
-            find_num = FALSE;
-        } else if (c == '+' || c == '-' || c == 'i' || c == 'I') {
-            break;
-        } else {
-            switch (radix) {
-            case BIN:
-                if (!(c >= '0' && c <= '1')) {
-                    goto IsSym;
-                }
-                break;
-            case OCT:
-                if (!(c >= '0' && c <= '7')) {
-                    goto IsSym;
-                }
-                break;
-            case DEC:
-                if (!(c >= '0' && c <= '9')) {
-                    goto IsSym;
-                }
-                break;
-            case HEX:
-                if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
-                    goto IsSym;
-                }
-                break;
-            default:
-                if (!(c >= '0' && c <= '9')) {
-                    goto IsSym;
-                }
-                break;
-            }
-            find_num = TRUE;
-        }
-        ++p;
-    }
-
-    if (radix == NO_RADIX)
-        radix = DEC;
-    pend = p;
-
-    if (find_slash) {
-        if (!find_num) {
-            goto IsSym;
-        }
-        Number *nr = malloc(sizeof(Number));
-        if (!nr) {
-            goto Error;
-        }
-        nr->t = NUMBER_LONG;
-        nr->l = xtod(buf, buflen, radix);
-
-        buflen = pend - pstart + 1;
-        memcpy(buf, pstart, buflen - 1);
-        buf[buflen - 1] = '\0';
-        Number *dr = malloc(sizeof(Number));
-        if (!dr) {
-            free(nr);
-            goto Error;
-        }
-        dr->t = NUMBER_LONG;
-        dr->l = xtod(buf, buflen, radix);
-
-        number = malloc(sizeof(Number));
-        if (!number) {
-            free(nr);
-            free(dr);
-            goto Error;
-        }
-        number->t = NUMBER_FRACTION;
-        number->fn.nr = nr;
-        number->fn.dr = dr;
-    } else {
-        if (!find_num) {
-            goto IsSym;
-        }
-        number = malloc(sizeof(Number));
-        if (!number) {
-            goto Error;
-        }
-        buflen = pend - pstart + 1;
-        memcpy(buf, pstart, buflen - 1);
-        buf[buflen - 1] = '\0';
-        double db = xtod(buf, buflen, radix);
-        if (find_dot) {
-            number->t = NUMBER_DOUBLE;
-            number->d = db;
-        } else {
-            number->t = NUMBER_LONG;
-            number->l = db;
-        }
-    }
-    *ppstart = pend;
-    goto Exit;
-IsSym:
-    if (must_number) {
-        goto Error;
-    }
-    goto Exit;
-Error:
-    number = (Number*)-1;
-Exit:
-    if (buf) {
-        free(buf);
-    }
-    return number;
-}
-
-static String cell_to_string(IScheme *isc, Cell *c)
-{
+static String cell_to_string(IScheme *isc, Cell *c, bool readable) {
 	String s = isc->buff;
 	if (c == CELL_NIL) {
 		s = "()";
@@ -1093,191 +758,398 @@ static String cell_to_string(IScheme *isc, Cell *c)
             // TODO
         }
 	} else if (is_string(c)) {
-		snprintf(s, STR_BUF_SIZE, "\"%s\"", string(c));
+	    char *fmt;
+	    if (readable) fmt = "%s";
+        else fmt = "\"%s\"";
+        snprintf(s, STR_BUF_SIZE, fmt, string(c));
 	} else if (is_char(c)) {
-		switch(c->chr) {
-		case ' ':
-			s = "#\\space"; break;
-		case '\n':
-			s = "#\\newline"; break;
-		case '\r':
-			s = "#\\return"; break;
-		case '\t':
-			s =  "#\\tab"; break;
-		default:
-			if(c->chr == 127) {
-				s = "#\\del"; break;
-			} else if(c->chr < 32) {
-				snprintf(s, STR_BUF_SIZE, "#\\%s", ascii32[c->chr]);
-				break;
-			}
-			snprintf(s, STR_BUF_SIZE, "#\\%c", c->chr); break;
-			break;
-		}
+	    if (readable) {
+            snprintf(s, STR_BUF_SIZE, "%c", c->chr);
+        } else {
+    		switch(c->chr) {
+    		case ' ': s = "#\\space"; break;
+    		case '\n': s = "#\\newline"; break;
+    		case '\r': s = "#\\return"; break;
+    		case '\t': s =  "#\\tab"; break;
+    		default:
+    			if(c->chr == 127) {
+    				s = "#\\del"; break;
+    			} else if(c->chr < 32) {
+    				snprintf(s, STR_BUF_SIZE, "#\\%s", ascii32[c->chr]);
+    				break;
+    			}
+    			snprintf(s, STR_BUF_SIZE, "#\\%c", c->chr); break;
+    			break;
+    		}
+        }
 	} else {
-        snprintf(s, STR_BUF_SIZE, "unknow:%p", c);
+        snprintf(s, STR_BUF_SIZE, "unknown:%p", c);
     }
     return s;
 }
 
-static void print_cell(IScheme *isc, Cell *c)
-{
-    write_string(isc, cell_to_string(isc, c));
+static void print_cell_with_port(IScheme *isc, Cell *c, Cell *p) {
+    write_string(p, cell_to_string(isc, c, 1));
+}
+static void print_cell(IScheme *isc, Cell *c) {
+    write_string(isc->outport, cell_to_string(isc, c, 1));
 }
 
-static Cell *read_atom(IScheme *isc, int c)
-{
-    Number *real = NULL, *imag = NULL;
-    char *p = isc->buff;
-    int totalLen = read_upto(isc->inport, DELIMITERS, p, STR_BUF_SIZE);
+static void write_cell(IScheme *isc, Cell *c) {
+    write_string(isc->outport, cell_to_string(isc, c, 0));
+}
 
-    if (totalLen <= 0) {
+static Number *exact_to_inexact(Number *num) {
+    switch (num->t) {
+    case NUMBER_LONG:
+        num->t = NUMBER_DOUBLE;
+        num->d = num->l;
+        break;
+    case NUMBER_DOUBLE:
+        return num;
+    case NUMBER_FRACTION:
+    {
+        num->t = NUMBER_DOUBLE;
+        Number *nr = num->fn.nr;
+        Number *dr = num->fn.dr;
+        num->d = nr->l / dr->l;
+        free(nr);
+        free(dr);
+        break;
+    }
+    case NUMBER_COMPLEX:
+        exact_to_inexact(num->cx.rl);
+        exact_to_inexact(num->cx.im);
+        break;
+    }
+    return num;
+}
+
+static Number *inexact_to_exact(Number *num) {
+    switch (num->t) {
+    case NUMBER_LONG:
+        return num;
+    case NUMBER_DOUBLE:
+        // TODO: double to faction.
+        num->t = NUMBER_LONG;
+        num->l = num->d;
+        break;
+    case NUMBER_FRACTION:
+        return num;
+    case NUMBER_COMPLEX:
+        inexact_to_exact(num->cx.rl);
+        inexact_to_exact(num->cx.im);
+        break;
+    }
+    return num;
+}
+
+static Number *read_real(char **ppstart, char *pend, Exactness exact, Radix radix) {
+    Number *number = NULL;
+    char *p = *ppstart;
+    int c = *p;
+    uint8 sign = 0;
+    int buflen = 0;
+    bool find_num = FALSE;
+    bool find_dot = FALSE;
+    bool find_slash = FALSE;
+    char *buf = NULL;
+
+    if (pend - p >= STR_BUF_SIZE) {
+        goto Error;
+    }
+    buf = malloc(STR_BUF_SIZE);
+    if (!buf) {
+        goto Error;
+    }
+
+    if (c == '+') {
+        sign = 1;
+        ++p;
+    } else if (c == '-') {
+        sign = -1;
+        ++p;
+    }
+
+    char *pstart = p;
+    while (p < pend && (c = *p) != '\0') {
+        if (c == '.') {
+            if (find_dot || find_slash) {
+                goto Error;
+            }
+            find_dot = TRUE;
+        } else if (c == '/') {
+            if (find_dot || find_slash || !find_num) {
+                goto Error;
+            }
+            buflen = p - pstart + 1;
+            memcpy(buf, pstart, buflen - 1);
+            buf[buflen - 1] = '\0';
+            pstart = p + 1;
+            find_slash = TRUE;
+            find_num = FALSE;
+        } else if (c == '+' || c == '-' || c == 'i' || c == 'I') {
+            break;
+        } else {
+            switch (radix) {
+            case BIN:
+                if (!(c >= '0' && c <= '1')) {
+                    goto Error;
+                }
+                break;
+            case OCT:
+                if (!(c >= '0' && c <= '7')) {
+                    goto Error;
+                }
+                break;
+            case DEC:
+                if (!(c >= '0' && c <= '9')) {
+                    goto Error;
+                }
+                break;
+            case HEX:
+                if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+                    goto Error;
+                }
+                break;
+            default:
+                if (!(c >= '0' && c <= '9')) {
+                    goto Error;
+                }
+                break;
+            }
+            find_num = TRUE;
+        }
+        ++p;
+    }
+
+    if (radix == NO_RADIX)
+        radix = DEC;
+    pend = p;
+
+    if (find_slash) {
+        if (!find_num) {
+            goto Error;
+        }
+        Number *nr = malloc(sizeof(Number));
+        if (!nr) {
+            goto Error;
+        }
+        nr->t = NUMBER_LONG;
+        nr->l = xtod(buf, buflen, radix);
+
+        buflen = pend - pstart + 1;
+        memcpy(buf, pstart, buflen - 1);
+        buf[buflen - 1] = '\0';
+        Number *dr = malloc(sizeof(Number));
+        if (!dr) {
+            free(nr);
+            goto Error;
+        }
+        dr->t = NUMBER_LONG;
+        dr->l = xtod(buf, buflen, radix);
+
+        number = malloc(sizeof(Number));
+        if (!number) {
+            free(nr);
+            free(dr);
+            goto Error;
+        }
+        number->t = NUMBER_FRACTION;
+        number->fn.nr = nr;
+        number->fn.dr = dr;
+    } else {
+        if (!find_num) {
+            goto Error;
+        }
+        number = malloc(sizeof(Number));
+        if (!number) {
+            goto Error;
+        }
+        buflen = pend - pstart + 1;
+        memcpy(buf, pstart, buflen - 1);
+        buf[buflen - 1] = '\0';
+        double db = xtod(buf, buflen, radix);
+        if (find_dot) {
+            number->t = NUMBER_DOUBLE;
+            number->d = db;
+        } else {
+            number->t = NUMBER_LONG;
+            number->l = db;
+        }
+    }
+    *ppstart = pend;
+    if (exact == EXACT)
+        inexact_to_exact(number);
+    else if (exact == INEXACT)
+        exact_to_inexact(number);
+
+Error:
+    if (buf) {
+        free(buf);
+    }
+    return number;
+}
+
+static Cell *read_number(char **ppstart, char *pend, Exactness exact, Radix radix) {
+    char *p = *ppstart;
+    Number *real = NULL, *imag = NULL;
+    
+    real = read_real(&p, pend, exact, radix);
+    if (!real || p > pend)
+        goto Error;
+ 
+    if (p == pend) {
+        return mk_number(real);
+    } else {
+        int c = *p;
+        if (c == '+' || c == '-') {
+            imag = read_real(&p, pend, exact, radix);
+            if (!imag || p > pend) {
+                goto Error;
+            }
+            c = *p;
+            if (p != pend - 1 || (c != 'i' && c != 'I')) {
+                goto Error;
+            }
+            Number *num = malloc(sizeof(Number));
+            if (!num) {
+                goto Error;
+            }
+            num->t = NUMBER_COMPLEX;
+            num->cx.rl = real;
+            num->cx.im = imag;
+            return mk_number(num);
+        } else if (c == 'i' || c == 'I') {
+            if (p != pend - 1) {
+                goto Error;
+            }
+
+            Number *num = malloc(sizeof(Number));
+            if (!num) {
+                goto Error;
+            }
+            num->t = NUMBER_COMPLEX;
+            num->cx.rl = 0;
+            num->cx.im = real;
+            return mk_number(num);
+        }
+    }
+    
+Error:
+    if (real) free(real);
+    if (imag) free(imag);
+    return CELL_NIL;
+}
+
+static Cell *read_symbol(IScheme *isc, int c) {
+    char *p = isc->buff;
+    int total_len = read_upto(isc->inport, DELIMITERS, p, STR_BUF_SIZE);
+
+    if (total_len <= 0) {
         IError("read error.");
         return CELL_EOF;
     }
+    Cell *num = read_number(&p, p + total_len, NO_EXACTNESS, NO_RADIX);
+    if (num != CELL_NIL) {
+        return num;
+    }
+    return mk_symbol(isc->buff);
+}
 
-    Exactness exactness = NO_EXACTNESS;
+static Cell *read_const(IScheme *isc, int c) {
+    Number *real = NULL, *imag = NULL;
+    char *p = isc->buff;
+    int total_len = read_upto(isc->inport, DELIMITERS, p, STR_BUF_SIZE);
+
+    if (total_len <= 0) {
+        IError("read error.");
+        return CELL_EOF;
+    }
+    Exactness exact = NO_EXACTNESS;
     Radix radix = NO_RADIX;
-    char *pEnd = p + totalLen;
-    while (p < pEnd && *p == '#') {
-        if (p + 2 > pEnd)
-            goto Error0;
+    char *pend = p + total_len;
+    while (p < pend && *p == '#') {
+        if (p + 2 > pend)
+            goto Error;
         switch (p[1]) {
         case 'b': case 'B':
             if (radix != NO_RADIX)
-                goto Error0;
+                goto Error;
             radix = BIN;
             break;
         case 'o': case 'O':
             if (radix != NO_RADIX)
-                goto Error0;
+                goto Error;
             radix = OCT;
             break;
         case 'd': case 'D':
             if (radix != NO_RADIX)
-                goto Error0;
+                goto Error;
             radix = DEC;
             break;
         case 'x': case 'X':
             if (radix != NO_RADIX)
-                goto Error0;
+                goto Error;
             radix = HEX;
             break;
         case 'e': case 'E':
-            if (exactness != NO_EXACTNESS)
-                goto Error0;
-            exactness = EXACT;
+            if (exact != NO_EXACTNESS)
+                goto Error;
+            exact = EXACT;
             break;
         case 'i': case 'I':
-            if (exactness != NO_EXACTNESS)
-                goto Error0;
-            exactness = INEXACT;
+            if (exact != NO_EXACTNESS)
+                goto Error;
+            exact = INEXACT;
             break;
         case 'f': case 'F':
-            if (exactness != NO_EXACTNESS || radix != NO_RADIX || p + 2 != pEnd)
-                goto Error0;
+            if (exact != NO_EXACTNESS || radix != NO_RADIX || p + 2 != pend)
+                goto Error;
             return CELL_FALSE;
         case 't': case 'T':
-            if (exactness != NO_EXACTNESS || radix != NO_RADIX || p + 2 != pEnd)
-                goto Error0;
+            if (exact != NO_EXACTNESS || radix != NO_RADIX || p + 2 != pend)
+                goto Error;
             return CELL_TRUE;
         case '\\':
-            if (exactness != NO_EXACTNESS || radix != NO_RADIX || p + 2 == pEnd)
-                goto Error0;
+            if (exact != NO_EXACTNESS || radix != NO_RADIX || p + 2 == pend)
+                goto Error;
             p += 2;
-            if (pEnd - p > 1) {
-                if (pEnd - p == 3 && !strncasecmp(p, "tab", 3)) {
+            if (pend - p > 1) {
+                if (pend - p == 3 && !strncasecmp(p, "tab", 3)) {
                     return mk_char('\t');
-                } else if (pEnd - p == 4 && !strncasecmp(p, "space", 4)) {
+                } else if (pend - p == 4 && !strncasecmp(p, "space", 4)) {
                     return mk_char(' ');
-                } else if (pEnd - p == 6 && !strncasecmp(p, "return", 6)) {
+                } else if (pend - p == 6 && !strncasecmp(p, "return", 6)) {
                     return mk_char('\r');
-                } else if (pEnd - p == 7 && !strncasecmp(p, "newline", 7)) {
+                } else if (pend - p == 7 && !strncasecmp(p, "newline", 7)) {
                     return mk_char('\n');
                 }
-                goto Error0;
+                goto Error;
             }
             return mk_char(p[2]);
         default:
-            goto Error0;
+            goto Error;
         }
         p += 2;
     }
 
-    if (p < pEnd) {
-        printf("p:%s\n", p);
-        real = read_real(&p, pEnd, exactness, radix);
-        printf("real:%p\n", real);
-        if (real < 0 || p > pEnd)
-            goto Error1;
-        else if (real == NULL)
-            goto MkSym;
-        printf("num t:%d\n", real->t);
-        if (p == pEnd) {
-            return mk_number(real);
-        } else {
-            c = *p;
-            if (c == '+' || c == '-') {
-                imag = read_real(&p, pEnd, exactness, radix);
-                printf("num2 t:%d\n", imag->t);
-                 if (imag < 0 || p > pEnd)
-                    goto Error1;
-                else if (imag == NULL)
-                    goto MkSym;
-                c = *p;
-                if (p != pEnd - 1 || (c != 'i' && c != 'I')) {
-                    goto MkSym;
-                }
-
-                Number *num = malloc(sizeof(Number));
-                if (!num) {
-                    goto Error1;
-                }
-                num->t = NUMBER_COMPLEX;
-                num->cx.rl = real;
-                num->cx.im = imag;
-                return mk_number(num);
-            } else if (c == 'i' || c == 'I') {
-                if (p != pEnd - 1) {
-                    goto MkSym;
-                }
-
-                Number *num = malloc(sizeof(Number));
-                if (!num) {
-                    goto Error1;
-                }
-                num->t = NUMBER_COMPLEX;
-                num->cx.rl = 0;
-                num->cx.im = real;
-                return mk_number(num);
-            } else {
-                goto MkSym;
-            }
-        }
+    Cell *num = read_number(&p, pend, exact, radix);
+    if (num != CELL_NIL) {
+        return num;
     }
-    goto Error1;
 
-MkSym:
-    if (real > 0) free(real);
-    if (imag > 0) free(imag);
-    return mk_symbol(isc->buff);
-Error0:
-    IError("bad syntax '%s'.\n", p);
-    return CELL_EOF;
-Error1:
-    if (real > 0) free(real);
-    if (imag > 0) free(imag);
-    IError("read error.\n");
+Error:
+    IError("bad syntax: %s", isc->buff);
     return CELL_EOF;
 }
 
-static Cell *read_string(IScheme *isc, int q)
-{
+static Cell *read_string(IScheme *isc, int q) {
     char *buf = isc->buff;
     Cell *port = isc->inport;
     int idx = 0;
     int c;
-    while (idx < STR_BUF_SIZE && (c = get_char(port)) > 0 && c != q)
+    while (idx < STR_BUF_SIZE && (c = get_char(port)) > 0 && c != '\"')
     {
         if ('\\' == c)
         {
@@ -1287,13 +1159,12 @@ static Cell *read_string(IScheme *isc, int q)
         else
             buf[idx++] = c;
     }
-    if (c != q) IError("EOF in string.\n");
+    if (c != q) IError("EOF in string.");
     buf[idx++] = '\0';
     return mk_string(string_dup(buf));
 }
 
-static Cell *read_quote(IScheme *isc, int c)
-{
+static Cell *read_quote(IScheme *isc, int c) {
     Cell *cell = read_cell(isc);
     if (cell == CELL_EOF)
         return CELL_EOF;
@@ -1301,33 +1172,23 @@ static Cell *read_quote(IScheme *isc, int c)
     return cell;
 }
 
-static Cell *read_quasiquote(IScheme *isc, int c)
-{
+static Cell *read_quasiquote(IScheme *isc, int c) {
     return 0;
 }
 
-static Cell *read_unquote(IScheme *isc, int c)
-{
+static Cell *read_unquote(IScheme *isc, int c) {
     return 0;
 }
 
-static Cell *read_unquote_splicing(IScheme *isc, int c)
-{
+static Cell *read_unquote_splicing(IScheme *isc, int c) {
     return 0;
 }
 
-static Cell *read_const(IScheme *isc, int c)
-{
+static Cell *read_vector(IScheme *isc, int c) {
     return 0;
 }
 
-static Cell *read_vector(IScheme *isc, int c)
-{
-    return 0;
-}
-
-static Cell *read_list(IScheme *isc, int c)
-{
+static Cell *read_list(IScheme *isc, int c) {
     Cell *head, *tail, *cell = CELL_NIL;
     head = tail = cons(CELL_NIL, CELL_NIL);
 
@@ -1374,10 +1235,197 @@ static Cell *read_list(IScheme *isc, int c)
     return cdr(head);
 }
 
-static void init_readers()
-{
+static Cell *op_func0(IScheme *isc, int op) {
+    IMessage("[F:%s][L:%d][O:%d]", __FUNCTION__, __LINE__, op);
+    Cell *c;
+    switch (op) {
+    case OP_REPL_LOOP:
+        if (isc->inport->port->t & PORT_EOF) {
+            if (isc->cur_file_idx == 0)
+                return CELL_FALSE;
+            pop_load_file(isc);
+            popOp(isc, isc->retnv);
+        }
+        if (is_interactive(isc)) {
+            isc->envir = isc->global_envir;
+            isc->contis = CELL_NIL;
+            write_string(isc->outport, ">> ");
+        }
+        pushOp(isc, OP_REPL_LOOP, isc->args, isc->envir);
+        pushOp(isc, OP_REPL_PRINT, isc->args, isc->envir);
+        pushOp(isc, OP_REPL_EVAL, isc->args, isc->global_envir);
+        gotoOp(isc, OP_REPL_READ);
+    case OP_REPL_READ:
+        c = read_cell(isc);
+        if (c == CELL_EOF) {
+            gotoOp(isc, OP_ERROR);
+        }
+        popOp(isc, c);
+    case OP_REPL_EVAL:
+        isc->code = isc->retnv;
+        gotoOp(isc, OP_EVAL);
+    case OP_REPL_PRINT:
+        if (is_interactive(isc)) {
+            if (isc->retnv != CELL_UNDEF) {
+                print_cell(isc, isc->retnv);
+                write_string(isc->outport, "\n");
+            }
+        }
+        popOp(isc, isc->retnv);
+    case OP_DEF0:
+        if (!is_pair(isc->code))
+            Error(isc, "missing expression after identifier.");
+        if (is_immutable(car(isc->code)))
+            Error(isc, "unable to alter immutable atom.");
+        if (is_pair(c = car(isc->code))) {
+            Cell *e = cadr(isc->code);
+            for (; is_pair(c); c = car(c)) {
+                e = cons(isc->sym_lambda, cons(cadr(c), e));
+            }
+            isc->code = e;
+        } else if (is_symbol(c = car(isc->code))) {
+            isc->code = cadr(isc->code);
+        } else {
+            Error(isc, "invalid define expression.");
+        }
+        pushOp(isc, OP_DEF1, CELL_NIL, c);
+        gotoOp(isc, OP_EVAL);
+    case OP_DEF1:
+        mk_envir(isc->envir, isc->code, isc->retnv);
+        popOp(isc, CELL_UNDEF);
+    case OP_LAMBDA:
+        popOp(isc, mk_proc(isc->code, isc->envir));        
+    case OP_EVAL:
+        if (is_symbol(isc->code)) {
+            c = assq(isc->code, cdr(isc->envir));
+            if (is_pair(c)) popOp(isc, cdr(c));
+            else Error(isc, "unbound variable:%s", symbol(isc->code));
+        } else if (is_pair(isc->code)) {
+            if (is_syntax(c = car(isc->code))) {
+                isc->code = cdr(isc->code);
+                gotoOp(isc, c->chr);
+            } else if (is_symbol(c = car(isc->code))) {
+                c = assq(c, cdr(isc->envir));
+                if (is_pair(c) && is_syntax(c = cdr(c))) {
+                    isc->code = cdr(isc->code);
+                    gotoOp(isc, c->chr);
+                }
+            }
+            pushOp(isc, OP_EVAL_OPC, CELL_NIL, isc->code);
+            isc->code = car(isc->code);
+            gotoOp(isc, OP_EVAL);
+        } else{
+            popOp(isc, isc->code);
+        }
+        break;
+    case OP_EVAL_OPC:
+        if (is_macro(isc->retnv)) {
+            // TODO: macro
+        } else {
+            isc->code = cdr(isc->code);
+            gotoOp(isc, OP_EVAL_ARGS);
+        }
+        break;
+    case OP_EVAL_ARGS:
+        isc->args = cons(isc->retnv, isc->args);
+        if (is_pair(isc->code)) {
+            pushOp(isc, OP_EVAL_ARGS, isc->args, cdr(isc->code));
+            isc->code = car(isc->code);
+            isc->args = CELL_NIL;
+            gotoOp(isc, OP_EVAL);
+        } else {
+            isc->args = reverse(isc, isc->args);
+            isc->code = car(isc->args);
+            isc->args = cdr(isc->args);
+            gotoOp(isc, OP_APPLY);
+        }
+        break;
+    case OP_APPLY:
+        if (is_syntax(isc->code) || is_iproc(isc->code)) {
+            gotoOp(isc, isc->code->chr);
+        } else if (is_eproc(isc->code)) {
+            popOp(isc, isc->code->proc(isc, isc->args));
+        } else if (is_proc(isc->code) || is_macro(isc->code) || is_promise(isc->code)) {
+            Cell *env = closure_env(isc->code);
+            Cell *fp = car(closure_code(isc->code));
+            Cell *ap = isc->args;
+            for (; is_pair(fp); fp = cdr(fp), ap = cdr(ap)) {
+                if (ap == CELL_NIL) Error(isc, "too few arguments."); 
+                mk_envir(env, car(fp), car(ap));
+            }
+            if (fp == CELL_NIL && ap != CELL_NIL) Error(isc, "too much arguments.");
+            if (is_symbol(fp)) mk_envir(env, fp, ap);
+            isc->code = cdr(closure_code(isc->code));
+            isc->args = CELL_NIL;
+            gotoOp(isc, OP_EVAL_LIST);
+        } else if (is_conti(isc->code)) {
+            popOp(isc, isc->args != CELL_NIL ? car(isc->args) : CELL_NIL);
+        } 
+        Error(isc, "illegal procudure.");
+    case OP_EVAL_LIST:
+        if (!is_pair(isc->code)) popOp(isc, isc->code);
+        if (cdr(isc->code) != CELL_NIL) pushOp(isc, OP_EVAL_LIST, CELL_NIL, cdr(isc->code));
+        isc->code = car(isc->code);
+        gotoOp(isc, OP_EVAL);
+    case OP_ERROR:
+        gotoOp(isc, OP_REPL_LOOP);
+    }
+    return CELL_TRUE;
+}
+
+static Cell *op_func1(IScheme *isc, int op) {
+    switch (op) {
+    case OP_LOAD:
+        break;
+    case OP_DISPLAY:
+    {
+        int len = length(isc->args);
+        if (len == 1) {
+            print_cell(isc, car(isc->args));
+        } else if (len == 2) {
+            print_cell_with_port(isc, car(isc->args), cadr(isc->args));
+        } else {
+            Error(isc, "unmatched arguments.");
+        }
+        write_string(isc->outport, "\n");
+        popOp(isc, CELL_UNDEF);
+        popOp(isc, CELL_UNDEF);
+    }
+    }
+    return CELL_TRUE;
+}
+
+static Cell *op_func2(IScheme *isc, int op) {
+    switch (op) {
+
+    }
+    return CELL_TRUE;
+}
+
+static Cell *op_func3(IScheme *isc, int op) {
+    switch (op) {
+    case OP_ADD:
+        // TODO:ADD
+        for (Cell *lst = isc->args, *c; is_pair(lst); lst = cdr(lst)) {
+            c = car(lst);
+            if (!is_number(c)) {
+                Error(isc, "unexpected atom.");
+            }
+        }
+        break;
+    case OP_SUB:
+        break;
+    case OP_MULTI:
+        break;
+    case OP_DIV:
+        break;
+    }
+    return CELL_TRUE;
+}
+
+static void init_readers() {
     for (int i = 0;  i < TOK_MAX;  i++) g_readers[i]= read_illegal;
-    g_readers[TOK_ATOM]     = read_atom;
+    g_readers[TOK_SYMBOL]   = read_symbol;
     g_readers[TOK_LPAREN]   = read_list;
     g_readers[TOK_LBRACKET] = read_list;
     g_readers[TOK_LBRACE]   = read_list;
@@ -1390,8 +1438,7 @@ static void init_readers()
     g_readers[TOK_VECTOR]   = read_vector;
 }
 
-static void isc_init(FILE *in, String name)
-{
+static void isc_init(FILE *in, String name) {
     gp_isc = malloc(sizeof(IScheme));
     if (!gp_isc) {
         IError("no memory.");
@@ -1408,19 +1455,19 @@ static void isc_init(FILE *in, String name)
     gp_isc->sym_lambda = internal(gp_isc, "lambda");
     gp_isc->sym_quote = internal(gp_isc, "quote");
     gp_isc->load_files[0] = gp_isc->inport;
+    gp_isc->global_envir = cons(internal(gp_isc, "*global-envir*"), CELL_NIL);
         
     Cell *c = CELL_NIL;
     for (int i = 0; i < sizeof(g_opcodes)/sizeof(OpCode); i++) {
         if (g_opcodes[i].name) {
             if (g_opcodes[i].t == SYNTAX) c = mk_syntax(i);
             else c = mk_iproc(i);
-            mk_envir(&gp_isc->global_envir, internal(gp_isc, g_opcodes[i].name), c);
+            mk_envir(gp_isc->global_envir, internal(gp_isc, g_opcodes[i].name), c);
         }
     }
 }
 
-static void isc_repl()
-{
+static void isc_repl() {
     gp_isc->op = OP_REPL_LOOP;
     for (;;) {
         if (g_opcodes[gp_isc->op].func(gp_isc, gp_isc->op) != CELL_TRUE)
@@ -1428,13 +1475,11 @@ static void isc_repl()
     }
 }
 
-static void isc_finalize()
-{
+static void isc_finalize() {
 
 }
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
     FILE *in = NULL;
     String name = NULL;
     if (argc == 1) {

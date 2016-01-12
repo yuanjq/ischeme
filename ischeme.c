@@ -15,33 +15,50 @@
 #define CELL_ERR        (Cell*)-1
 #define DELIMITERS      "()[]{}\";\f\t\v\n\r "
 
-#define gotoOp(sc, o)      	{ sc->op=o; return CELL_TRUE; }
+#define gotoOp(sc, o)      	({ sc->op=o; return CELL_TRUE; })
 #define popOp(sc, r)       	return pop_op(sc, r)
 #define pushOp(sc,o,a,e)   	push_op(sc, o, a, e)
-#define Error(sc,f,...)	    return error_helper(sc,f,##__VA_ARGS__)
+#define jmpErr(sc,f,...)	jmp_err(sc,TRUE,f,##__VA_ARGS__)
 #define closure_code(c)     car(c)
 #define closure_env(c)      cdr(c)
 
 
 static IScheme *gp_isc = NULL;
-
-static Cell* op_func0(IScheme*, int);
-static Cell* op_func1(IScheme*, int);
-static Cell* op_func2(IScheme*, int);
-static Cell* op_func3(IScheme*, int);
-static OpCode g_opcodes[] = {
-    #define _OPCODE(f, n, t, o) {f, n, t},
-    #include "opcodes.h"
-    #undef _OPCODE
-    {0}
-};
-
 static Reader g_readers[TOK_MAX];
 static Cell g_true = {t:BOOLEAN, {chr:TRUE}};
 static Cell g_false = {t:BOOLEAN, {chr:FALSE}};
 static Cell g_nil;
 static Cell g_eof;
 static Cell g_undef;
+
+
+#define T_ANY       "\001"
+#define T_CHAR      "\002"
+#define T_NUMBER    "\003"
+#define T_INTEGER   "\004"
+#define T_NATURAL   "\005"
+#define T_STRING    "\006"
+#define T_SYMBOL    "\007"
+#define T_PAIR      "\010"
+#define T_LIST      "\011"
+#define T_VECTOR    "\012"
+#define T_PROC      "\013"
+#define T_ENVIR     "\014"
+#define T_CONTI     "\015"
+#define T_PORT      "\016"
+#define T_INPORT    "\017"
+#define T_OUTPORT   "\020"
+
+static Cell* op_func0(IScheme*, int);
+static Cell* op_func1(IScheme*, int);
+static Cell* op_func2(IScheme*, int);
+static Cell* op_func3(IScheme*, int);
+static OpCode g_opcodes[] = {
+    #define _OPCODE(f, n, t1, o, m1, m2, t2) {f, n, t1, m1, m2, t2},
+    #include "opcodes.h"
+    #undef _OPCODE
+    {0}
+};
 
 static const char *ascii32[32]={
 	"nul",
@@ -79,7 +96,10 @@ static const char *ascii32[32]={
 };
 
 
-/************** memery manager ************/
+static void jmp_err(IScheme *isc, bool jmp, String fmt, ...);
+
+
+/***************** memory manager ***************/
 static int seg_alloc(IScheme *isc, int num)
 {
     if (isc->last_seg + num >= SEGS_NUM) return 0;
@@ -113,8 +133,8 @@ static Cell *cell_alloc()//Cell *args, Cell *env)
     if (!gp_isc->free_cells) {
         gc(gp_isc);//, args, env);
         if (!gp_isc->free_cells && seg_alloc(gp_isc, 1) <= 0) {
-            IError("no memery.");
-            return NULL;
+            jmpErr(gp_isc, "no memery.");
+            //return NULL;
         }
     }
     Cell *c = gp_isc->free_cells;
@@ -124,24 +144,30 @@ static Cell *cell_alloc()//Cell *args, Cell *env)
 }
 
 
-/*************** syntax **************/
+/****************** syntax ******************/
+static bool is_any(Cell *c)       { return TRUE; }
 static bool is_char(Cell *c)     { return c && T(c) == CHAR; }
 static bool is_number(Cell *c)  { return c && T(c) == NUMBER; }
+static bool is_integer(Cell *c) { return is_number(c) && c->num->t == NUMBER_LONG; }
+static bool is_natural(Cell *c) { return is_integer(c) && c->num->l >= 0; }
 static bool is_string(Cell *c)  { return c && T(c) == STRING; }
 static bool is_pair(Cell *c)     { return c && T(c) == PAIR; }
+static bool is_vector(Cell *c)  { return c && T(c) == VECTOR; }
 static bool is_symbol(Cell *c)  { return c && T(c) == SYMBOL; }
 static bool is_syntax(Cell *c)  { return c && T(c) == SYNTAX; }
 static bool is_proc(Cell *c)     { return c && T(c) == PROC; }
 static bool is_iproc(Cell *c)   { return c && T(c) == IPROC; }
 static bool is_eproc(Cell *c)   { return c && T(c) == EPROC; }
+static bool is_envir(Cell *c)   { return c && T(c) == ENVIR; }
 static bool is_macro(Cell *c)   { return c && T(c) == MACRO; }
-static bool is_promise(Cell *c)   { return c && T(c) == PROMISE; }
-
+static bool is_promise(Cell *c) { return c && T(c) == PROMISE; }
 static bool is_port(Cell *c)     { return c && T(c) == PORT; }
+static bool is_inport(Cell *c)  { return is_port(c) && c->port->t & PORT_INPUT; }
+static bool is_outport(Cell *c) { return is_port(c) && c->port->t & PORT_OUTPUT; }
 static bool is_conti(Cell *c)    { return c && T(c) == CONTI; }
 static bool is_port_eof(Cell *c) { return c && T(c) == PORT && c->port && c->port->t & PORT_EOF; }
+static bool is_immutable(Cell *c) { return c && c->t & M_IMMUTABLE; }
 
-static bool is_immutable(Cell *c)   { return c && c->t & M_IMMUTABLE; }
 static bool is_interactive(IScheme *isc) {
     return isc->cur_file_idx == 0 &&
            isc->load_files[0]->port->t & PORT_FILE &&
@@ -176,6 +202,12 @@ static Cell *cons(Cell *a, Cell *d) {
         }
     }
     return c;
+}
+
+static bool is_list(Cell *c) {
+    for (; is_pair(c); c = cdr(c));
+    if (c == CELL_NIL) return TRUE;
+    return FALSE;
 }
 
 static String string_dup(String str) {
@@ -268,7 +300,7 @@ static Cell *mk_proc(Cell *a, Cell *e) {
             c->t = PROC;
             c->pair = pair;
             pair->a = a;
-            pair->d = e;
+            pair->d = cons(CELL_NIL, cdr(e));
         }
     }
     return c;
@@ -315,7 +347,55 @@ static Cell *mk_conti(IScheme *isc) {
 }
 
 
-/***************** repl loop ******************/
+/********************* stack frame ********************/
+static void jmp_err(IScheme *isc, bool jmp, String fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+
+    Port *in = isc->load_files[isc->cur_file_idx]->port;
+    Port *out = isc->outport->port;
+    fprintf(out->f.file, "*Error* ");
+    if (in->t & PORT_FILE && in->f.file != stdin) {
+        fprintf(out->f.file, "file \"%s\", line %d\n", out->f.name, out->f.curr_line);
+    }
+    vfprintf(out->f.file, fmt, ap);
+    va_end(ap);
+    fputc('\n', out->f.file);
+    isc->op = OP_ERROR;
+    if (jmp) longjmp(isc->jmpbuf, 0);
+}
+
+static inline Cell *pop_op(IScheme *isc, Cell *v) {
+    if (!is_pair(isc->contis) || !is_conti(car(isc->contis)))
+        return CELL_FALSE;
+    Conti *conti = car(isc->contis)->conti;
+    isc->retnv = v;
+    isc->op = conti->op;
+    isc->args = conti->args;
+    isc->code = conti->code;
+    isc->envir = conti->envir;
+    isc->contis = cdr(isc->contis);
+    return CELL_TRUE;
+}
+
+static void push_op(IScheme *isc, Op op, Cell *args, Cell *code) {
+    Conti *conti = (Conti*)malloc(sizeof(Conti));
+    if (conti) {
+        Cell *c = cell_alloc();
+        if (c) {
+            c->t = CONTI;
+            c->conti = conti;
+            c->conti->op = op;
+            c->conti->args = args;
+            c->conti->envir = isc->envir;
+            c->conti->code = code;
+        }
+        isc->contis = cons(c, isc->contis);
+    }
+}
+
+
+/***************** I/O handler ******************/
 static void port_close(IScheme *isc, Cell* p, int f) {
 	Port *port = p->port;
 	port->t &= ~f;
@@ -356,14 +436,14 @@ int write_char(Cell *out, int c) {
 		return fputc(c, pt->f.file);
 	} else {
 		if(pt->s.end <= pt->s.cur) {
-           IError("write char out of range.");
-           return -1;
+           jmpErr(gp_isc, "write char out of range.");
+           //return -1;
         }
 		*pt->s.cur++ = c;
         return c;
 	}
-    IError("invalid out port.");
-    return -1;
+    jmpErr(gp_isc, "invalid out port.");
+    //return -1;
 }
 
 int write_string(Cell *out, String s) {
@@ -373,14 +453,14 @@ int write_string(Cell *out, String s) {
 		return fwrite(s, 1, len, pt->f.file);
 	} else if (pt->t & PORT_STRING) {
 	    if (len > pt->s.end - pt->s.cur) {
-           IError("write string out of range.");
-           return -1; 
+           jmpErr(gp_isc, "write string out of range.");
+           //return -1; 
         }
 		for(; len; len--) *pt->s.cur++ = *s++;
         return len;
 	}
-    IError("invalid out port.");
-    return -1;
+    jmpErr(gp_isc, "invalid out port.");
+    //return -1;
 }
 
 static inline int get_char(Cell *in) {
@@ -514,8 +594,8 @@ static int get_token(IScheme *isc) {
             unget_char(isc->inport, '#');
             return TOK_CONST;
         }
-        IError("bad syntax '#%c'.", c);
-        return TOK_EOF;
+        jmpErr(isc, "bad syntax '#%c'.", c);
+        //return TOK_EOF;
     case ';':
         c = skip_line(isc);
         if (c == EOF) return TOK_EOF;
@@ -529,64 +609,18 @@ static int get_token(IScheme *isc) {
 static Cell *read_cell(IScheme *isc) {
     int t = get_token(isc);
     if (t == TOK_EOF) {
-        IError("end of file.");
-        return CELL_EOF;
+        jmpErr(isc, "end of file.");
+        //return CELL_EOF;
     }
     return g_readers[t](isc, t);
 }
 
 static Cell *read_cell_by_token(IScheme *isc, int t) {
     if (t == TOK_EOF) {
-        IError("end of file.");
-        return CELL_EOF;
+        jmpErr(isc, "end of file.");
+        //return CELL_EOF;
     }
     return g_readers[t](isc, t);
-}
-
-static inline Cell *pop_op(IScheme *isc, Cell *v) {
-    if (!is_pair(isc->contis) || !is_conti(car(isc->contis)))
-        return CELL_FALSE;
-    Conti *conti = car(isc->contis)->conti;
-    isc->retnv = v;
-    isc->op = conti->op;
-    isc->args = conti->args;
-    isc->code = conti->code;
-    isc->envir = conti->envir;
-    isc->contis = cdr(isc->contis);
-    return CELL_TRUE;
-}
-
-static Cell *error_helper(IScheme *isc, String fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-
-    Port *in = isc->load_files[isc->cur_file_idx]->port;
-    Port *out = isc->outport->port;
-    fprintf(out->f.file, "*Error*: ");
-    if (in->t & PORT_FILE && in->f.file != stdin) {
-        fprintf(out->f.file, "file \"%s\", line %d\n", out->f.name, out->f.curr_line);
-    }
-    vfprintf(out->f.file, fmt, ap);
-    va_end(ap);
-    fputc('\n', out->f.file);
-    isc->op = OP_ERROR;
-    return CELL_TRUE;
-}
-
-static void push_op(IScheme *isc, Op op, Cell *args, Cell *code) {
-    Conti *conti = (Conti*)malloc(sizeof(Conti));
-    if (conti) {
-        Cell *c = cell_alloc();
-        if (c) {
-            c->t = CONTI;
-            c->conti = conti;
-            c->conti->op = op;
-            c->conti->args = args;
-            c->conti->envir = isc->envir;
-            c->conti->code = code;
-        }
-        isc->contis = cons(c, isc->contis);
-    }
 }
 
 static Cell *find_symbol(IScheme *isc, String s) {
@@ -737,7 +771,7 @@ static String cell_to_string(IScheme *isc, Cell *c, bool readable) {
 	} else if (is_macro(c)) {
 		snprintf(s, STR_BUF_SIZE, "#<MACRO:%p>", c);
 	} else if (is_promise(c)) {
-		snprintf(s, STR_BUF_SIZE, "#<PROMISE:%p>", c);
+	   	snprintf(s, STR_BUF_SIZE, "#<PROMISE:%p>", c);
 	} else if (is_proc(c) || is_iproc(c) || is_eproc(c)) {
 		snprintf(s, STR_BUF_SIZE, "#<PROCEDURE:%p>", c);
 	} else if (is_conti(c)) {
@@ -750,9 +784,9 @@ static String cell_to_string(IScheme *isc, Cell *c, bool readable) {
             snprintf(s, STR_BUF_SIZE, "%lf", num->d);
         } else if (num->t == NUMBER_FRACTION) {
             if (num->fn.nr->t == NUMBER_DOUBLE || num->fn.dr->t == NUMBER_DOUBLE) {
-                snprintf(s, STR_BUF_SIZE, "%lf/%lf", num->fn.nr->d, num->fn.dr->d);    
+                snprintf(s, STR_BUF_SIZE, "%lf/%lf", num->fn.nr->d, num->fn.dr->d);
             } else {
-                snprintf(s, STR_BUF_SIZE, "%ld/%ld", num->fn.nr->l, num->fn.dr->l);   
+                snprintf(s, STR_BUF_SIZE, "%ld/%ld", num->fn.nr->l, num->fn.dr->l);
             }
         } else {
             // TODO
@@ -782,7 +816,9 @@ static String cell_to_string(IScheme *isc, Cell *c, bool readable) {
     			break;
     		}
         }
-	} else {
+    } else if (is_pair(c)) {
+        snprintf(s, STR_BUF_SIZE, "pair:%p", c);
+    } else {
         snprintf(s, STR_BUF_SIZE, "unknown:%p", c);
     }
     return s;
@@ -848,7 +884,7 @@ static Number *read_real(char **ppstart, char *pend, Exactness exact, Radix radi
     Number *number = NULL;
     char *p = *ppstart;
     int c = *p;
-    uint8 sign = 0;
+    unsigned char sign = 0;
     int buflen = 0;
     bool find_num = FALSE;
     bool find_dot = FALSE;
@@ -1047,8 +1083,8 @@ static Cell *read_symbol(IScheme *isc, int c) {
     int total_len = read_upto(isc->inport, DELIMITERS, p, STR_BUF_SIZE);
 
     if (total_len <= 0) {
-        IError("read error.");
-        return CELL_EOF;
+        jmpErr(isc, "read error.");
+        //return CELL_EOF;
     }
     Cell *num = read_number(&p, p + total_len, NO_EXACTNESS, NO_RADIX);
     if (num != CELL_NIL) {
@@ -1063,8 +1099,8 @@ static Cell *read_const(IScheme *isc, int c) {
     int total_len = read_upto(isc->inport, DELIMITERS, p, STR_BUF_SIZE);
 
     if (total_len <= 0) {
-        IError("read error.");
-        return CELL_EOF;
+        jmpErr(isc, "read error.");
+        //return CELL_EOF;
     }
     Exactness exact = NO_EXACTNESS;
     Radix radix = NO_RADIX;
@@ -1140,8 +1176,8 @@ static Cell *read_const(IScheme *isc, int c) {
     }
 
 Error:
-    IError("bad syntax: %s", isc->buff);
-    return CELL_EOF;
+    jmpErr(isc, "bad syntax: %s", isc->buff);
+    //return CELL_EOF;
 }
 
 static Cell *read_string(IScheme *isc, int q) {
@@ -1159,7 +1195,7 @@ static Cell *read_string(IScheme *isc, int q) {
         else
             buf[idx++] = c;
     }
-    if (c != q) IError("EOF in string.");
+    if (c != '\"') jmpErr(isc, "EOF in string.");
     buf[idx++] = '\0';
     return mk_string(string_dup(buf));
 }
@@ -1203,19 +1239,19 @@ static Cell *read_list(IScheme *isc, int c) {
     for (;;) {
         d = get_token(isc);
         if (d == TOK_EOF) {
-            IError("end of file.");
-            return CELL_EOF;
+            jmpErr(isc, "end of file.");
+            //return CELL_EOF;
         }
         if (c == d) break;
         if (d == TOK_RPAREN || d == TOK_RBRACKET || d == TOK_RBRACE) {
-            IError("unmatched brackets.");
-            return CELL_EOF;
+            jmpErr(isc, "unmatched brackets.");
+            //return CELL_EOF;
         }
 
         if (d == TOK_DOT) {
             if (cell == CELL_NIL) {
-                IError("illegal used of dot.");
-                return CELL_EOF;
+                jmpErr(isc, "illegal used of dot.");
+                //return CELL_EOF;
             }
             cell = read_cell(isc);
             if (cell == CELL_EOF)
@@ -1223,8 +1259,8 @@ static Cell *read_list(IScheme *isc, int c) {
             tail = rplacd(tail, cell);
             c = get_token(isc);
             if (c != TOK_RPAREN) {
-                IError("illegal used of dot.");
-                return CELL_EOF;
+                jmpErr(isc, "illegal used of dot.");
+                //return CELL_EOF;
             }
         }
         cell = read_cell_by_token(isc, d);
@@ -1236,7 +1272,6 @@ static Cell *read_list(IScheme *isc, int c) {
 }
 
 static Cell *op_func0(IScheme *isc, int op) {
-    IMessage("[F:%s][L:%d][O:%d]", __FUNCTION__, __LINE__, op);
     Cell *c;
     switch (op) {
     case OP_REPL_LOOP:
@@ -1268,25 +1303,29 @@ static Cell *op_func0(IScheme *isc, int op) {
         if (is_interactive(isc)) {
             if (isc->retnv != CELL_UNDEF) {
                 print_cell(isc, isc->retnv);
-                write_string(isc->outport, "\n");
             }
+            write_string(isc->outport, "\n");
         }
         popOp(isc, isc->retnv);
     case OP_DEF0:
         if (!is_pair(isc->code))
-            Error(isc, "missing expression after identifier.");
+            jmpErr(isc, "missing expression after identifier.");
         if (is_immutable(car(isc->code)))
-            Error(isc, "unable to alter immutable atom.");
+            jmpErr(isc, "unable to alter immutable atom.");
         if (is_pair(c = car(isc->code))) {
-            Cell *e = cadr(isc->code);
-            for (; is_pair(c); c = car(c)) {
-                e = cons(isc->sym_lambda, cons(cadr(c), e));
+            Cell *e = cdr(isc->code);
+            e = cons(isc->sym_lambda, cons(cdr(c), e));
+            c = car(c);
+            if (is_pair(c)) {
+                for (; is_pair(c); c = car(c)) {
+                    e = cons(isc->sym_lambda, cons(cdr(c), cons(e, CELL_NIL)));
+                }
             }
             isc->code = e;
         } else if (is_symbol(c = car(isc->code))) {
             isc->code = cadr(isc->code);
         } else {
-            Error(isc, "invalid define expression.");
+            jmpErr(isc, "invalid define expression.");
         }
         pushOp(isc, OP_DEF1, CELL_NIL, c);
         gotoOp(isc, OP_EVAL);
@@ -1294,12 +1333,12 @@ static Cell *op_func0(IScheme *isc, int op) {
         mk_envir(isc->envir, isc->code, isc->retnv);
         popOp(isc, CELL_UNDEF);
     case OP_LAMBDA:
-        popOp(isc, mk_proc(isc->code, isc->envir));        
+        popOp(isc, mk_proc(isc->code, isc->envir));
     case OP_EVAL:
         if (is_symbol(isc->code)) {
             c = assq(isc->code, cdr(isc->envir));
             if (is_pair(c)) popOp(isc, cdr(c));
-            else Error(isc, "unbound variable:%s", symbol(isc->code));
+            else jmpErr(isc, "unbound variable:%s", symbol(isc->code));
         } else if (is_pair(isc->code)) {
             if (is_syntax(c = car(isc->code))) {
                 isc->code = cdr(isc->code);
@@ -1311,13 +1350,14 @@ static Cell *op_func0(IScheme *isc, int op) {
                     gotoOp(isc, c->chr);
                 }
             }
-            pushOp(isc, OP_EVAL_OPC, CELL_NIL, isc->code);
+            pushOp(isc, OP_EVAL_ARGS, CELL_NIL, cdr(isc->code));
             isc->code = car(isc->code);
             gotoOp(isc, OP_EVAL);
-        } else{
+        } else {
             popOp(isc, isc->code);
         }
         break;
+    #if 0
     case OP_EVAL_OPC:
         if (is_macro(isc->retnv)) {
             // TODO: macro
@@ -1326,6 +1366,7 @@ static Cell *op_func0(IScheme *isc, int op) {
             gotoOp(isc, OP_EVAL_ARGS);
         }
         break;
+    #endif
     case OP_EVAL_ARGS:
         isc->args = cons(isc->retnv, isc->args);
         if (is_pair(isc->code)) {
@@ -1350,23 +1391,53 @@ static Cell *op_func0(IScheme *isc, int op) {
             Cell *fp = car(closure_code(isc->code));
             Cell *ap = isc->args;
             for (; is_pair(fp); fp = cdr(fp), ap = cdr(ap)) {
-                if (ap == CELL_NIL) Error(isc, "too few arguments."); 
+                if (ap == CELL_NIL) jmpErr(isc, "too few arguments.");
                 mk_envir(env, car(fp), car(ap));
             }
-            if (fp == CELL_NIL && ap != CELL_NIL) Error(isc, "too much arguments.");
-            if (is_symbol(fp)) mk_envir(env, fp, ap);
+            if (fp == CELL_NIL && ap != CELL_NIL) jmpErr(isc, "too much arguments.");
             isc->code = cdr(closure_code(isc->code));
             isc->args = CELL_NIL;
+            isc->envir = env;
             gotoOp(isc, OP_EVAL_LIST);
         } else if (is_conti(isc->code)) {
             popOp(isc, isc->args != CELL_NIL ? car(isc->args) : CELL_NIL);
-        } 
-        Error(isc, "illegal procudure.");
-    case OP_EVAL_LIST:
-        if (!is_pair(isc->code)) popOp(isc, isc->code);
-        if (cdr(isc->code) != CELL_NIL) pushOp(isc, OP_EVAL_LIST, CELL_NIL, cdr(isc->code));
+        }
+        jmpErr(isc, "illegal procudure.");
+    case OP_EVAL_LIST: 
+        if (is_pair(isc->code)) {
+            if (cdr(isc->code) != CELL_NIL) {
+                pushOp(isc, OP_EVAL_LIST, CELL_NIL, cdr(isc->code));
+            }
+            isc->code = car(isc->code);
+            gotoOp(isc, OP_EVAL);
+        } else {
+            gotoOp(isc, OP_EVAL);
+        }
+     case OP_IF0:
+        pushOp(isc, OP_IF1, CELL_NIL, cdr(isc->code));
         isc->code = car(isc->code);
         gotoOp(isc, OP_EVAL);
+    case OP_IF1: 
+        if (isc->retnv == CELL_FALSE) {
+            if (length(isc->code) == 2) {
+                isc->code = cdr(isc->code);
+                isc->args = CELL_NIL;
+                gotoOp(isc, OP_EVAL_LIST);
+            }
+            popOp(isc, CELL_UNDEF);
+        }
+        isc->code = car(isc->code);
+        isc->args = CELL_NIL;
+        gotoOp(isc, OP_EVAL_LIST);
+    case OP_LET:
+        op = length(isc->code);
+        for (Cell *lst = car(isc->code); is_pair(lst); lst = cdr(lst)) {
+            Cell *binding = car(lst);
+            if (!is_pair(binding) || !is_symbol(car(binding)))
+                jmpErr(isc, "let: bad syntax");
+            mk_envir(isc->envir, car(binding), cadr(binding));
+        }
+        gotoOp(isc, OP_EVAL_LIST);
     case OP_ERROR:
         gotoOp(isc, OP_REPL_LOOP);
     }
@@ -1384,11 +1455,7 @@ static Cell *op_func1(IScheme *isc, int op) {
             print_cell(isc, car(isc->args));
         } else if (len == 2) {
             print_cell_with_port(isc, car(isc->args), cadr(isc->args));
-        } else {
-            Error(isc, "unmatched arguments.");
         }
-        write_string(isc->outport, "\n");
-        popOp(isc, CELL_UNDEF);
         popOp(isc, CELL_UNDEF);
     }
     }
@@ -1405,14 +1472,17 @@ static Cell *op_func2(IScheme *isc, int op) {
 static Cell *op_func3(IScheme *isc, int op) {
     switch (op) {
     case OP_ADD:
-        // TODO:ADD
+    {
+        int total=0;
         for (Cell *lst = isc->args, *c; is_pair(lst); lst = cdr(lst)) {
-            c = car(lst);
-            if (!is_number(c)) {
-                Error(isc, "unexpected atom.");
-            }
+            total += car(lst)->num->l;
         }
-        break;
+        Number *num = malloc(sizeof(Number));
+        if (!num) jmpErr(isc, "memory error");
+        num->t = NUMBER_LONG;
+        num->l = total;
+        popOp(isc, mk_number(num));
+    }
     case OP_SUB:
         break;
     case OP_MULTI:
@@ -1467,9 +1537,86 @@ static void isc_init(FILE *in, String name) {
     }
 }
 
+static struct {
+    bool (*func)(Cell*);
+    char *kind;
+} g_arg_inspector[] = {
+    {is_any,        0},
+    {is_char,       "character"},
+    {is_number,     "number"},
+    {is_integer,    "integer"},
+    {is_natural,    "natural"},
+    {is_string,     "string"},
+    {is_symbol,     "symbol"},
+    {is_pair,       "pair"},
+    {is_list,       "list"},
+    {is_vector,     "vector"},
+    {is_proc,       "procedure"},    
+    {is_envir,      "environment"},
+    {is_conti,      "continuation"},
+    {is_port,       "port"},
+    {is_inport,     "in port"},
+    {is_outport,    "out port"},
+};
+
+bool arg_type_check(IScheme *isc) {
+    OpCode  *opc = g_opcodes + isc->op;
+    int n;
+    if (opc->t == IPROC) {
+        n = length(isc->args);
+        if (n < opc->min_args) {
+            snprintf(isc->buff, STR_BUF_SIZE, "%s: unexpected number of arguments, expected at least %d but %d %s given",
+                    opc->name,
+                    opc->min_args,
+                    n,
+                    n>1?"were":"was");
+            return FALSE;
+        }
+        if (n > opc->max_args) {
+            snprintf(isc->buff, STR_BUF_SIZE, "%s: unexpected number of arguments, expected at most %d but %d %s given",
+                    opc->name,
+                    opc->max_args,
+                    n,
+                    n>1?"were":"was");
+            return FALSE;
+        }
+        if (opc->arg_types != 0) {
+            int index = 0;
+            const char *arg_types = opc->arg_types;
+            Cell *args = isc->args;
+            do {
+                Cell *arg = car(args);
+                if (!g_arg_inspector[arg_types[0]-1].func(arg)) break;
+                if (arg_types[1] != 0) ++arg_types;
+                args = cdr(args);
+                ++index;
+            } while (index < n);
+            if (index < n) {
+                snprintf(isc->buff, STR_BUF_SIZE, "%s: unmatched type of argument %d, must be %s",
+                        opc->name,
+                        index + 1,
+                        g_arg_inspector[arg_types[0]-1].kind);
+                return FALSE;
+            }
+        }
+    } else if (opc->t == SYNTAX) { 
+        n = length(isc->code);
+        if (n < opc->min_args || n > opc->max_args) {
+            snprintf(isc->buff, STR_BUF_SIZE, "%s: bad syntax", opc->name);
+        }
+        return FALSE;
+    }
+    return TRUE;
+}
+
 static void isc_repl() {
     gp_isc->op = OP_REPL_LOOP;
     for (;;) {
+        setjmp(gp_isc->jmpbuf);
+        if (!arg_type_check(gp_isc)) {
+            jmp_err(gp_isc, FALSE, gp_isc->buff);
+            break;
+        }
         if (g_opcodes[gp_isc->op].func(gp_isc, gp_isc->op) != CELL_TRUE)
             break;
     }

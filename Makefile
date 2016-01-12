@@ -1,6 +1,8 @@
+.PHONY: ischeme clean
 CFLAGS += --std=c99
-ischeme: 
-	cc -o $@ ischeme.c $(CFLAGS) -lm
+LDFLAGS += -lm
 
+ischeme: ischeme.c
+	cc -o $@ $< $(CFLAGS) $(LDFLAGS)
 clean:
 	rm ischeme

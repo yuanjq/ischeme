@@ -1,6 +1,8 @@
 #ifndef ISCHEME_H
 #define ISCHEME_H
 
+#include <setjmp.h>
+
 //#define IDEBUG_MORE
 
 #ifdef  IDEBUG_MORE
@@ -12,14 +14,12 @@
 #else
 #define IMessage(fmt, ...)
 #define IWarning(fmt, ...)
-#define IMessage(fmt, ...)
 #define IError(fmt, ...)
 #define ITraceEnter()
 #define ITraceLeave()
 #endif
 
 typedef unsigned char   bool;
-typedef unsigned char   uint8;
 typedef unsigned int    Char;
 typedef char*           String;
 typedef const char*     Symbol;
@@ -82,6 +82,7 @@ enum _Type {
     EPROC,
     MACRO,
     CONTI,
+    ENVIR,
     PROMISE,
 };
 
@@ -137,14 +138,14 @@ enum _Radix {
 };
 
 enum _Op {
-    #define _OPCODE(f, n, t, o) o,
+    #define _OPCODE(f, n, t1, o, m1, m2, t2) o,
     #include "opcodes.h"
     #undef _OPCODE
     OPCODE_MAX
 };
 
 struct _Number {
-    uint8 t;
+    unsigned char t;
     union {
         long l;
         double d;
@@ -219,16 +220,20 @@ struct _IScheme {
     Cell *envir;
     Cell *code;
     Cell *contis;
-    char buff[STR_BUF_SIZE];
 
     Cell *sym_lambda;
     Cell *sym_quote;
+    jmp_buf jmpbuf;
+    char buff[STR_BUF_SIZE];
 };
 
 struct _OpCode {
     OpFunc func;
     String name;
-    int t;
+    unsigned char t;
+    int min_args;
+    int max_args;
+    unsigned char *arg_types;
 };
 
 #endif

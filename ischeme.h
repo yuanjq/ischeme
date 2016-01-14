@@ -28,6 +28,7 @@ typedef struct _Number  Number;
 typedef struct _Pair    Pair;
 typedef struct _Port    Port;
 typedef struct _Conti   Conti;
+typedef struct _Proc    Proc;
 typedef struct _Cell    Cell;
 typedef struct _OpCode  OpCode;
 typedef struct _IScheme IScheme;
@@ -183,9 +184,15 @@ struct _Conti {
     Cell *code;
 };
 
-struct _Pair{
+struct _Pair {
     Cell *a;
     Cell *d;
+};
+
+struct _Proc {
+    Cell *args;
+    Cell *code;
+    Cell *env;
 };
 
 struct _Cell {
@@ -197,7 +204,8 @@ struct _Cell {
         Pair    *pair;
         Port    *port;
         Conti   *conti;
-        EProc   proc;
+        Proc    *proc;
+        EProc   eproc;
         Cell    *next;
     };
 };

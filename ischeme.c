@@ -19,8 +19,9 @@
 #define popOp(sc, r)       	return pop_op(sc, r)
 #define pushOp(sc,o,a,e)   	push_op(sc, o, a, e)
 #define jmpErr(sc,f,...)	jmp_err(sc,TRUE,f,##__VA_ARGS__)
-#define closure_code(c)     car(c)
-#define closure_env(c)      cdr(c)
+#define proc_args(p)        p->proc->args
+#define proc_code(p)        p->proc->code
+#define proc_env(p)         p->proc->env
 
 
 static IScheme *gp_isc = NULL;
@@ -178,8 +179,8 @@ static String symbol(Cell *c)   { return is_symbol(c) ? c->str: NULL; }
 static String string(Cell *c)   { return is_string(c) ? c->str: NULL; }
 static Port* port(Cell *c)       { return is_port(c) ? c->port : NULL; }
 
-static Cell *car(Cell *c)        { return (is_pair(c) || is_proc(c) || is_macro(c) || is_promise(c)) ? c->pair->a : NULL; }
-static Cell *cdr(Cell *c)        { return (is_pair(c) || is_proc(c) || is_macro(c) || is_promise(c)) ? c->pair->d : NULL; }
+static Cell *car(Cell *c)        { return is_pair(c) ? c->pair->a : NULL; }
+static Cell *cdr(Cell *c)        { return is_pair(c) ? c->pair->d : NULL; }
 static Cell *caar(Cell *c)       { return car(car(c)); }
 static Cell *cadr(Cell *c)       { return car(cdr(c)); }
 static Cell *cdar(Cell *c)       { return cdr(car(c)); }
@@ -293,14 +294,15 @@ static Cell *mk_symbol(String s) {
 
 static Cell *mk_proc(Cell *a, Cell *e) {
     Cell *c = NULL;
-    Pair *pair = malloc(sizeof(Pair));
-    if (pair) {
+    Proc *proc = malloc(sizeof(Proc));
+    if (proc) {
         c = cell_alloc();
         if (c) {
             c->t = PROC;
-            c->pair = pair;
-            pair->a = a;
-            pair->d = cons(CELL_NIL, cdr(e));
+            c->proc = proc;
+            proc->args = caar(a);
+            proc->code = cadr(a);
+            proc->env = cons(CELL_NIL, cdr(e));
         }
     }
     return c;
@@ -1385,17 +1387,17 @@ static Cell *op_func0(IScheme *isc, int op) {
         if (is_syntax(isc->code) || is_iproc(isc->code)) {
             gotoOp(isc, isc->code->chr);
         } else if (is_eproc(isc->code)) {
-            popOp(isc, isc->code->proc(isc, isc->args));
-        } else if (is_proc(isc->code) || is_macro(isc->code) || is_promise(isc->code)) {
-            Cell *env = closure_env(isc->code);
-            Cell *fp = car(closure_code(isc->code));
+            popOp(isc, isc->code->eproc(isc, isc->args));
+        } else if (is_proc(isc->code)) {
+            Cell *env = proc_env(isc->code);
+            Cell *fp = proc_args(isc->code);
             Cell *ap = isc->args;
             for (; is_pair(fp); fp = cdr(fp), ap = cdr(ap)) {
                 if (ap == CELL_NIL) jmpErr(isc, "too few arguments.");
                 mk_envir(env, car(fp), car(ap));
             }
             if (fp == CELL_NIL && ap != CELL_NIL) jmpErr(isc, "too much arguments.");
-            isc->code = cdr(closure_code(isc->code));
+            isc->code = proc_code(isc->code);
             isc->args = CELL_NIL;
             isc->envir = env;
             gotoOp(isc, OP_EVAL_LIST);

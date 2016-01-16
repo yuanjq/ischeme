@@ -28,7 +28,7 @@ typedef struct _Number  Number;
 typedef struct _Pair    Pair;
 typedef struct _Port    Port;
 typedef struct _Conti   Conti;
-typedef struct _Proc    Proc;
+typedef struct _Closure Closure;
 typedef struct _Cell    Cell;
 typedef struct _OpCode  OpCode;
 typedef struct _IScheme IScheme;
@@ -81,6 +81,7 @@ enum _Type {
     PROC,
     IPROC,
     EPROC,
+    CLOSURE,
     MACRO,
     CONTI,
     ENVIR,
@@ -189,7 +190,7 @@ struct _Pair {
     Cell *d;
 };
 
-struct _Proc {
+struct _Closure {
     Cell *args;
     Cell *code;
     Cell *env;
@@ -204,8 +205,8 @@ struct _Cell {
         Pair    *pair;
         Port    *port;
         Conti   *conti;
-        Proc    *proc;
         EProc   eproc;
+        Closure *clsr;
         Cell    *next;
     };
 };
@@ -232,7 +233,7 @@ struct _IScheme {
     Cell *sym_lambda;
     Cell *sym_quote;
     jmp_buf jmpbuf;
-    char buff[STR_BUF_SIZE];
+    char buff[STR_BUF_SIZE + 1];
 };
 
 struct _OpCode {

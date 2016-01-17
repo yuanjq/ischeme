@@ -28,10 +28,12 @@
 #define popOp(sc, r)       	return pop_op(sc, r)
 #define pushOp(sc,o,a,c)   	push_op(sc, o, a, c)
 #define jmpErr(et,eb,...)	({ print_err(gp_isc,et,eb,##__VA_ARGS__); gp_isc->op = OP_ERROR; longjmp(gp_isc->jmpbuf, 0); })
-#define closure_args(p)     p->clsr->args
-#define closure_code(p)     p->clsr->code
-#define closure_env(p)      p->clsr->env
-
+#define closure_args(c)     c->clsr->args
+#define closure_code(c)     c->clsr->code
+#define closure_env(c)      c->clsr->env
+#define contis_car(c)       c->pair->a
+#define contis_cdr(c)       c->pair->d
+#define find_envir(e,s)     assq(s,e)
 
 static IScheme *gp_isc = NULL;
 static Reader g_readers[TOK_MAX];
@@ -176,6 +178,7 @@ static bool is_port(Cell *c)     { return c && T(c) == PORT; }
 static bool is_inport(Cell *c)  { return is_port(c) && c->port->t & PORT_INPUT; }
 static bool is_outport(Cell *c) { return is_port(c) && c->port->t & PORT_OUTPUT; }
 static bool is_conti(Cell *c)    { return c && T(c) == CONTI; }
+static bool is_contis(Cell *c)    { return c && T(c) == CONTIS; }
 static bool is_port_eof(Cell *c) { return c && T(c) == PORT && c->port && c->port->t & PORT_EOF; }
 static bool is_immutable(Cell *c) { return c && c->t & M_IMMUTABLE; }
 
@@ -369,8 +372,10 @@ static Cell *mk_iproc(int op) {
     return c;
 }
 
-static Cell *mk_conti(IScheme *isc) {
-    return 0;
+static Cell *mk_contis(IScheme *isc) {
+    Cell *c = cons(car(isc->contis), cdr(isc->contis));
+    c->t = CONTIS;
+    return c;
 }
 
 
@@ -649,6 +654,38 @@ static Cell *read_cell_by_token(IScheme *isc, int t) {
     return g_readers[t](isc, t);
 }
 
+static bool num_equal(Number *a, Number *b) {
+    if (!a || !b) return FALSE;
+    if (a->t != b->t) return FALSE;
+    switch (a->t) {
+    case NUMBER_LONG:
+        return a->l == b->l;
+    case NUMBER_DOUBLE:
+        return a->d == b->d;
+    case NUMBER_FRACTION:
+        return (a->fn.nr->l == b->fn.nr->l && a->fn.dr == b->fn.dr);
+    case NUMBER_COMPLEX:
+        return num_equal(a->cx.rl, b->cx.rl) && num_equal(a->cx.im, b->cx.im);
+    }
+    return FALSE;
+}
+
+static bool equal(Cell *a, Cell *b) {
+    if (a == b) return TRUE;
+    if (a->t != b->t) return FALSE;
+    switch (a->t) {
+    case CHAR:
+        return a->chr == b->chr;
+    case NUMBER:
+        return num_equal(a->num, b->num);
+    case STRING:
+    case SYMBOL:
+        if (a->str && b->str) return !strcmp(a->str, b->str);
+        break;
+    }
+    return FALSE;
+}
+
 static Cell *find_symbol(IScheme *isc, String s) {
     for (Cell *c = isc->symbols; c; c = cdr(c)) {
         String sym = symbol(car(c));
@@ -667,10 +704,12 @@ static Cell* internal(IScheme *isc, String s) {
 }
 
 static Cell *assq(Cell *key, Cell *list) {
-	String s = symbol(key);
+    Cell *c = CELL_NIL;
+    if (!is_symbol(key)) return CELL_NIL;
     for (; is_pair(list); list = cdr(list)) {
-        if (!strcmp(s, symbol(caar(list))))
-            return car(list);
+        if (is_pair(c = car(list)) && equal(car(c), key)) {
+            return c;
+        }
     }
     return CELL_NIL;
 }
@@ -679,14 +718,6 @@ static int length(Cell *list) {
     int len = 0;
     for (; is_pair(list); list = cdr(list)) ++len;
     return len;
-}
-
-static Cell *find_envir(Cell *env, Cell *s) {
-    for (Cell *e = env; is_pair(e); e = cdr(e)) {
-        if (is_pair(car(e)) && caar(e) == s)
-            return car(e);
-    }
-    return CELL_NIL;
 }
 
 static Cell *set_envir(Cell *env, Cell *s, Cell *v) {
@@ -827,7 +858,7 @@ static void write_cell(Cell *port, Cell *c, bool readable, bool more, bool top) 
         } else {
 		    snprintf(s, STR_BUF_SIZE, "#<PROCEDURE:%p>", c);
         }
-	} else if (is_conti(c)) {
+	} else if (is_contis(c)) {
 		snprintf(s, STR_BUF_SIZE, "#<CONTINUATION:%p>", c);
 	} else if (is_number(c)) {
 		Number *num = c->num;
@@ -1228,7 +1259,7 @@ static Cell *read_const(IScheme *isc, int c) {
                 }
                 goto Error;
             }
-            return mk_char(p[2]);
+            return mk_char(p[0]);
         default:
             goto Error;
         }
@@ -1477,7 +1508,9 @@ static Cell *op_func0(IScheme *isc, int op) {
             isc->args = CELL_NIL;
             isc->envir = env;
             gotoOp(isc, OP_EVAL_LIST);
-        } else if (is_conti(isc->code)) {
+        } else if (is_contis(isc->code)) {
+            isc->contis = cons(contis_car(isc->code), contis_cdr(isc->code));            
+            Conti *conti = car(isc->contis)->conti;
             popOp(isc, isc->args != CELL_NIL ? car(isc->args) : CELL_NIL);
         }
         jmpErr(SyntaxError, "illegal procudure.");
@@ -1491,6 +1524,14 @@ static Cell *op_func0(IScheme *isc, int op) {
         } else {
             gotoOp(isc, OP_EVAL);
         }
+     case OP_CALLCC:
+        c = car(isc->args);
+        if (length(closure_args(c)) != 1) {
+            jmpErr(TypeError, "invalid number of arguments to procedure at #<PROCEDURE call-with-current-continuation>.");
+        }
+        isc->code = c;
+        isc->args = cons(mk_contis(isc), CELL_NIL);
+        gotoOp(isc, OP_APPLY);
      case OP_IF0:
         pushOp(isc, OP_IF1, CELL_NIL, cdr(isc->code));
         isc->code = car(isc->code);
@@ -1590,9 +1631,9 @@ static Cell *op_func1(IScheme *isc, int op) {
     {
         int len = length(isc->args);
         if (len == 1) {
-            print_cell(car(isc->args), isc->outport);
+            print_cell_readable(car(isc->args), isc->outport);
         } else if (len == 2) {
-            print_cell(car(isc->args), cadr(isc->args));
+            print_cell_readable(car(isc->args), cadr(isc->args));
         }
         popOp(isc, CELL_UNDEF);
     }
@@ -1673,6 +1714,8 @@ static void isc_init(FILE *in, String name) {
             mk_envir(gp_isc->global_envir, internal(gp_isc, g_opcodes[i].name), c);
         }
     }
+    mk_envir(gp_isc->global_envir, internal(gp_isc, "call/cc"),
+        cdr(find_envir(gp_isc->global_envir, internal(gp_isc, g_opcodes[OP_CALLCC].name))));
 }
 
 static struct {
@@ -1691,7 +1734,7 @@ static struct {
     {is_vector,     "vector"},
     {is_proc,       "procedure"},    
     {is_envir,      "environment"},
-    {is_conti,      "continuation"},
+    {is_contis,     "continuation"},
     {is_port,       "port"},
     {is_inport,     "in port"},
     {is_outport,    "out port"},
@@ -1773,12 +1816,12 @@ int main(int argc, char *argv[]) {
         if (!strcmp(argv[1], "-h")  || !strcmp(argv[1], "--help")) {
             printf("iScheme v0.1 by yuanjq\n");
             printf("Options and arguments:\n");
-            printf("-\t\t: program read from stdin\n");
-            printf("file\t\t: program read from file");
-            printf("-h\t\t: print this help message and exit (also --help)");
-            printf("-v\t\t: iScheme's version (also --version)");
+            printf("  -\t\t program read from stdin\n");
+            printf("  file\t\t program read from file\n");
+            printf("  -h(--help)\t print this help message and exit\n");
+            printf("  -v(--version)\t iScheme's version\n");
             return 0;
-        } else if (!strcmp(argv[1], "-v") || strcmp(argv[1], "--version")) {
+        } else if (!strcmp(argv[1], "-v") || !strcmp(argv[1], "--version")) {
             printf("iScheme v0.1\n");
             return 0;
         } else if (!strcmp(argv[1], "-")) {

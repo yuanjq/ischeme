@@ -84,6 +84,7 @@ enum _Type {
     CLOSURE,
     MACRO,
     CONTI,
+    CONTIS,
     ENVIR,
     PROMISE,
 };

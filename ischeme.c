@@ -33,7 +33,7 @@
 #define closure_env(c)      c->clsr->env
 #define contis_car(c)       c->pair->a
 #define contis_cdr(c)       c->pair->d
-#define find_envir(e,s)     assq(s,e)
+#define find_envir(s,e)     assq(s,e)
 
 static IScheme *gp_isc = NULL;
 static Reader g_readers[TOK_MAX];
@@ -146,7 +146,6 @@ static Cell *cell_alloc()//Cell *args, Cell *env)
         gc(gp_isc);//, args, env);
         if (!gp_isc->free_cells && seg_alloc(gp_isc, 1) <= 0) {
             jmpErr(MemoryError, "no memery.");
-            //return NULL;
         }
     }
     Cell *c = gp_isc->free_cells;
@@ -464,34 +463,34 @@ static void pop_load_file(IScheme *isc) {
 int write_char(Cell *out, int c) {
 	Port *pt = out->port;
 	if(pt->t & PORT_FILE) {
-		return fputc(c, pt->f.file);
+        c = fputc(c, pt->f.file);
+        fflush(pt->f.file);
+		return c;
 	} else {
 		if(pt->s.end <= pt->s.cur) {
            jmpErr(MemoryError, "write char out of range.");
-           //return -1;
         }
 		*pt->s.cur++ = c;
         return c;
 	}
     jmpErr(IOError, "invalid out port.");
-    //return -1;
 }
 
 int write_string(Cell *out, String s) {
 	Port *pt= out->port;
 	int len = strlen(s);
 	if (pt->t & PORT_FILE) {
-		return fwrite(s, 1, len, pt->f.file);
+        len = fwrite(s, 1, len, pt->f.file);
+        fflush(pt->f.file);
+		return len;
 	} else if (pt->t & PORT_STRING) {
 	    if (len > pt->s.end - pt->s.cur) {
            jmpErr(MemoryError, "write string out of range.");
-           //return -1; 
         }
 		for(; len; len--) *pt->s.cur++ = *s++;
         return len;
 	}
     jmpErr(IOError, "invalid out port.");
-    //return -1;
 }
 
 static inline int get_char(Cell *in) {
@@ -626,7 +625,6 @@ static int get_token(IScheme *isc) {
             return TOK_CONST;
         }
         jmpErr(SyntaxError, "bad syntax '#%c'.", c);
-        //return TOK_EOF;
     case ';':
         c = skip_line(isc);
         if (c == EOF) return TOK_EOF;
@@ -641,7 +639,6 @@ static Cell *read_cell(IScheme *isc) {
     int t = get_token(isc);
     if (t == TOK_EOF) {
         jmpErr(IOError, "end of file.");
-        //return CELL_EOF;
     }
     return g_readers[t](isc, t);
 }
@@ -649,7 +646,6 @@ static Cell *read_cell(IScheme *isc) {
 static Cell *read_cell_by_token(IScheme *isc, int t) {
     if (t == TOK_EOF) {
         jmpErr(IOError, "end of file.");
-        //return CELL_EOF;
     }
     return g_readers[t](isc, t);
 }
@@ -722,7 +718,7 @@ static int length(Cell *list) {
 
 static Cell *set_envir(Cell *env, Cell *s, Cell *v) {
     Cell *e = CELL_NIL;
-    if ((e = find_envir(cdr(env), s)) != CELL_NIL) {
+    if ((e = find_envir(s, cdr(env))) != CELL_NIL) {
         rplacd(e, v);
     } else {
         e = cons(s, v);
@@ -1180,7 +1176,6 @@ static Cell *read_symbol(IScheme *isc, int c) {
 
     if (total_len <= 0) {
         jmpErr(IOError, "read error.");
-        //return CELL_EOF;
     }
     Cell *num = read_number(&p, p + total_len, NO_EXACTNESS, NO_RADIX);
     if (num != CELL_NIL) {
@@ -1196,7 +1191,6 @@ static Cell *read_const(IScheme *isc, int c) {
 
     if (total_len <= 0) {
         jmpErr(IOError, "read error.");
-        //return CELL_EOF;
     }
     Exactness exact = NO_EXACTNESS;
     Radix radix = NO_RADIX;
@@ -1273,7 +1267,6 @@ static Cell *read_const(IScheme *isc, int c) {
 
 Error:
     jmpErr(SyntaxError, "bad syntax: %s", isc->buff);
-    //return CELL_EOF;
 }
 
 static Cell *read_string(IScheme *isc, int q) {
@@ -1288,7 +1281,7 @@ static Cell *read_string(IScheme *isc, int q) {
             char *tmp = buf;
             buf_size += STR_BUF_SIZE * 5;
             buf = malloc(buf_size);
-            if (!buf) jmpErr(MemoryError, "no memory");
+            if (!buf) jmpErr(MemoryError, "no memory.");
             memcpy(buf, tmp, idx);
         }
         if ('\\' == c)
@@ -1304,7 +1297,7 @@ static Cell *read_string(IScheme *isc, int q) {
     
     if (buf_size == STR_BUF_SIZE) {
         buf = string_dup(buf);
-        if (!buf) jmpErr(MemoryError, "no memory");
+        if (!buf) jmpErr(MemoryError, "no memory.");
     }
     return mk_string(buf);
 }
@@ -1349,18 +1342,15 @@ static Cell *read_list(IScheme *isc, int c) {
         d = get_token(isc);
         if (d == TOK_EOF) {
             jmpErr(IOError, "end of file.");
-            //return CELL_EOF;
         }
         if (c == d) break;
         if (d == TOK_RPAREN || d == TOK_RBRACKET || d == TOK_RBRACE) {
             jmpErr(SyntaxError, "unmatched brackets.");
-            //return CELL_EOF;
         }
 
         if (d == TOK_DOT) {
             if (cell == CELL_NIL) {
                 jmpErr(SyntaxError, "illegal used of dot.");
-                //return CELL_EOF;
             }
             cell = read_cell(isc);
             if (cell == CELL_EOF)
@@ -1369,7 +1359,6 @@ static Cell *read_list(IScheme *isc, int c) {
             c = get_token(isc);
             if (c != TOK_RPAREN) {
                 jmpErr(SyntaxError, "illegal used of dot.");
-                //return CELL_EOF;
             }
         }
         cell = read_cell_by_token(isc, d);
@@ -1391,7 +1380,6 @@ static Cell *op_func0(IScheme *isc, int op) {
             popOp(isc, isc->retnv);
         }
         if (is_interactive(isc)) {
-            isc->envir = isc->global_envir;
             isc->contis = CELL_NIL;
             write_string(isc->outport, ">> ");
         }
@@ -1445,7 +1433,7 @@ static Cell *op_func0(IScheme *isc, int op) {
         popOp(isc, mk_proc(isc->code, isc->envir));
     case OP_EVAL:
         if (is_symbol(isc->code)) {
-            c = assq(isc->code, cdr(isc->envir));
+            c = find_envir(isc->code, cdr(isc->envir));
             if (is_pair(c)) popOp(isc, cdr(c));
             else jmpErr(ReferenceError, "unbound variable:%s", symbol(isc->code));
         } else if (is_pair(isc->code)) {
@@ -1453,7 +1441,7 @@ static Cell *op_func0(IScheme *isc, int op) {
                 isc->code = cdr(isc->code);
                 gotoOp(isc, c->chr);
             } else if (is_symbol(c = car(isc->code))) {
-                c = assq(c, cdr(isc->envir));
+                c = find_envir(c, cdr(isc->envir));
                 if (is_pair(c) && is_syntax(c = cdr(c))) {
                     isc->code = cdr(isc->code);
                     gotoOp(isc, c->chr);
@@ -1510,7 +1498,6 @@ static Cell *op_func0(IScheme *isc, int op) {
             gotoOp(isc, OP_EVAL_LIST);
         } else if (is_contis(isc->code)) {
             isc->contis = cons(contis_car(isc->code), contis_cdr(isc->code));            
-            Conti *conti = car(isc->contis)->conti;
             popOp(isc, isc->args != CELL_NIL ? car(isc->args) : CELL_NIL);
         }
         jmpErr(SyntaxError, "illegal procudure.");
@@ -1657,7 +1644,7 @@ static Cell *op_func3(IScheme *isc, int op) {
             total += car(lst)->num->l;
         }
         Number *num = malloc(sizeof(Number));
-        if (!num) jmpErr(MemoryError, "memory error");
+        if (!num) jmpErr(MemoryError, "no memory.");
         num->t = NUMBER_LONG;
         num->l = total;
         popOp(isc, mk_number(num));
@@ -1705,6 +1692,7 @@ static void isc_init(FILE *in, String name) {
     gp_isc->sym_quote = internal(gp_isc, "quote");
     gp_isc->load_files[0] = gp_isc->inport;
     gp_isc->global_envir = cons(internal(gp_isc, "*global-envir*"), CELL_NIL);
+    gp_isc->envir = gp_isc->global_envir;
         
     Cell *c = CELL_NIL;
     for (int i = 0; i < sizeof(g_opcodes)/sizeof(OpCode); i++) {
@@ -1715,7 +1703,7 @@ static void isc_init(FILE *in, String name) {
         }
     }
     mk_envir(gp_isc->global_envir, internal(gp_isc, "call/cc"),
-        cdr(find_envir(gp_isc->global_envir, internal(gp_isc, g_opcodes[OP_CALLCC].name))));
+        cdr(find_envir(internal(gp_isc, g_opcodes[OP_CALLCC].name), cdr(gp_isc->global_envir))));
 }
 
 static struct {
@@ -1736,8 +1724,8 @@ static struct {
     {is_envir,      "environment"},
     {is_contis,     "continuation"},
     {is_port,       "port"},
-    {is_inport,     "in port"},
-    {is_outport,    "out port"},
+    {is_inport,     "input port"},
+    {is_outport,    "output port"},
 };
 
 bool arg_type_check(IScheme *isc) {

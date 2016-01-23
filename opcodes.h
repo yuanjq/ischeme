@@ -18,6 +18,7 @@ _OPCODE(op_func0, NULL,                             0,          OP_LET1,        
 _OPCODE(op_func0, NULL,                             0,          OP_LET2,                    0,  0, 0)
 _OPCODE(op_func0, "let*",                           SYNTAX,     OP_LETSEQ0,                 2,  0xFFFF, 0)
 _OPCODE(op_func0, NULL,                             0,          OP_LETSEQ1,                 0,  0, 0)
+_OPCODE(op_func0, NULL,                             0,          OP_LETSEQ2,                 0,  0, 0)
 _OPCODE(op_func0, "letrec",                         SYNTAX,     OP_LETREC,                  0,  0,  0)
 _OPCODE(op_func0, "set!",                           SYNTAX,     OP_SET,                     0,  0,  0)
 _OPCODE(op_func0, "if",                             SYNTAX,     OP_IF0,                     2,  3,  0)

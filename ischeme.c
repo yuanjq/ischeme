@@ -191,21 +191,20 @@ static String symbol(Cell *c)   { return is_symbol(c) ? c->str: NULL; }
 static String string(Cell *c)   { return is_string(c) ? c->str: NULL; }
 static Port* port(Cell *c)       { return is_port(c) ? c->port : NULL; }
 
-static Cell *car(Cell *c)       { return is_pair(c) ? c->pair->a : NULL; }
-static Cell *cdr(Cell *c)       { return is_pair(c) ? c->pair->d : NULL; }
-static Cell *caar(Cell *c)      { return car(car(c)); }
-static Cell *cadr(Cell *c)      { return car(cdr(c)); }
-static Cell *cdar(Cell *c)      { return cdr(car(c)); }
-static Cell *cddr(Cell *c)      { return cdr(cdr(c)); }
-static Cell *caaar(Cell *c)     { return car(car(car(c))); }
-static Cell *caadr(Cell *c)     { return car(car(cdr(c))); }
-static Cell *cadar(Cell *c)     { return car(cdr(car(c))); }
-static Cell *caddr(Cell *c)     { return car(cdr(cdr(c))); }
-static Cell *cdaar(Cell *c)     { return cdr(car(car(c))); }
-static Cell *cdadr(Cell *c)     { return cdr(car(cdr(c))); }
-static Cell *cddar(Cell *c)     { return cdr(cdr(car(c))); }
-static Cell *cdddr(Cell *c)     { return cdr(cdr(cdr(c))); }
-
+#define car(c)      ({ c && T(c) == PAIR ? c->pair->a : NULL; })
+#define cdr(c)      ({ c && T(c) == PAIR ? c->pair->d : NULL; })
+#define caar(c)     car(car(c))
+#define cadr(c)     car(cdr(c))
+#define cdar(c)     cdr(car(c))
+#define cddr(c)     cdr(cdr(c))
+#define caaar(c)    car(car(car(c)))
+#define caadr(c)    car(car(cdr(c)))
+#define cadar(c)    car(cdr(car(c)))
+#define caddr(c)    car(cdr(cdr(c)))
+#define cdaar(c)    cdr(car(car(c)))
+#define cdadr(c)    cdr(car(cdr(c)))
+#define cddar(c)    cdr(cdr(car(c)))
+#define cdddr(c)    cdr(cdr(cdr(c)))
 
 static Cell *rplaca(Cell *c, Cell *a)    { return is_pair(c) ? c->pair->a = a : NULL; }
 static Cell *rplacd(Cell *c, Cell *d)    { return is_pair(c) ? c->pair->d = d : NULL; }
@@ -1587,16 +1586,18 @@ static Cell *op_func0(IScheme *isc, int op) {
                 jmpErr(SyntaxError, "let*: bad syntax of binding.");
         }
         c = car(isc->code);
-        isc->envir = cons(CELL_NIL, cdr(isc->envir));
         pushOp(isc, OP_LETSEQ1, cdr(isc->code), c);
         isc->args = CELL_NIL;
         isc->code = cadar(c);
         gotoOp(isc, OP_EVAL);
     case OP_LETSEQ1:
+        isc->envir = cons(CELL_NIL, cdr(isc->envir));
+        gotoOp(isc, OP_LETSEQ2);
+    case OP_LETSEQ2:
         mk_envir(isc->envir, caar(isc->code), isc->retnv);
         isc->code = cdr(isc->code);
         if (is_pair(isc->code)) {
-            pushOp(isc, OP_LETSEQ1, isc->args, isc->code);
+            pushOp(isc, OP_LETSEQ2, isc->args, isc->code);
             isc->code = cadar(isc->code);
             gotoOp(isc, OP_EVAL);
         } else {

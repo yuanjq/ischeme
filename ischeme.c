@@ -811,6 +811,26 @@ static String cell_to_string(Cell *c) {
     return NULL;
 }
 
+static void write_number(Cell *port, Number *num, String s) {
+    if (num->t == NUMBER_LONG) {
+        snprintf(s, STR_BUF_SIZE, "%ld", num->l);
+    } else if (num->t == NUMBER_DOUBLE) {
+        snprintf(s, STR_BUF_SIZE, "%lf", num->d);
+    } else if (num->t == NUMBER_FRACTION) {
+        if (num->fn.nr->t == NUMBER_DOUBLE || num->fn.dr->t == NUMBER_DOUBLE) {
+            snprintf(s, STR_BUF_SIZE, "%lf/%lf", num->fn.nr->d, num->fn.dr->d);
+        } else {
+            snprintf(s, STR_BUF_SIZE, "%ld/%ld", num->fn.nr->l, num->fn.dr->l);
+        }
+    } else if (num->t == NUMBER_COMPLEX) {
+        write_number(port, num->cx.rl->l, s);
+        write_char(port, '+');
+        write_number(port, num->cx.im->l, s);
+        write_char(port, 'i');
+    }
+    write_string(port, s);
+}
+
 static void write_cell(Cell *port, Cell *c, bool readable, bool more, bool top) {
 	String s = gp_isc->buff;
 	if (c == CELL_NIL) {
@@ -851,20 +871,8 @@ static void write_cell(Cell *port, Cell *c, bool readable, bool more, bool top) 
 	} else if (is_contis(c)) {
 		snprintf(s, STR_BUF_SIZE, "#<CONTINUATION:%p>", c);
 	} else if (is_number(c)) {
-		Number *num = c->num;
-        if (num->t == NUMBER_LONG) {
-            snprintf(s, STR_BUF_SIZE, "%ld", num->l);
-        } else if (num->t == NUMBER_DOUBLE) {
-            snprintf(s, STR_BUF_SIZE, "%lf", num->d);
-        } else if (num->t == NUMBER_FRACTION) {
-            if (num->fn.nr->t == NUMBER_DOUBLE || num->fn.dr->t == NUMBER_DOUBLE) {
-                snprintf(s, STR_BUF_SIZE, "%lf/%lf", num->fn.nr->d, num->fn.dr->d);
-            } else {
-                snprintf(s, STR_BUF_SIZE, "%ld/%ld", num->fn.nr->l, num->fn.dr->l);
-            }
-        } else if (num->t == NUMBER_COMPLEX) {
-            // TODO
-        }
+        write_number(port, c->num, s);
+        return;
 	} else if (is_string(c)) {
 	    char *fmt;
 	    if (readable) fmt = "%s";

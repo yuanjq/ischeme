@@ -1,6 +1,7 @@
 #ifndef ISCHEME_H
 #define ISCHEME_H
 
+#include <stdio.h>
 #include <setjmp.h>
 
 //#define IDEBUG_MORE
@@ -245,5 +246,8 @@ struct _OpCode {
     int max_args;
     unsigned char *arg_types;
 };
+
+
+void gc(IScheme *isc);
 
 #endif

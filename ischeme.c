@@ -1,4 +1,3 @@
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -133,17 +132,10 @@ static int seg_alloc(IScheme *isc, int num)
     return num;
 }
 
-static void gc(IScheme *isc)//, Cell *args, Cell *env)
-{
-    ITraceEnter();
-    // TODO:
-    ITraceLeave();
-}
-
-static Cell *cell_alloc()//Cell *args, Cell *env)
+static Cell *cell_alloc()
 {
     if (!gp_isc->free_cells) {
-        gc(gp_isc);//, args, env);
+        gc(gp_isc);
         if (!gp_isc->free_cells && seg_alloc(gp_isc, 1) <= 0) {
             jmpErr(MemoryError, "no memery.");
         }
@@ -656,7 +648,10 @@ static bool num_equal(Number *a, Number *b) {
     case NUMBER_LONG:
         return a->l == b->l;
     case NUMBER_DOUBLE:
-        return a->d == b->d;
+    {
+        double sub = a->d - b->d;
+        return sub > -0.000001 && sub < 0.000001;
+    }
     case NUMBER_FRACTION:
         return (a->fn.nr->l == b->fn.nr->l && a->fn.dr == b->fn.dr);
     case NUMBER_COMPLEX:
@@ -867,7 +862,7 @@ static void write_cell(Cell *port, Cell *c, bool readable, bool more, bool top) 
             } else {
                 snprintf(s, STR_BUF_SIZE, "%ld/%ld", num->fn.nr->l, num->fn.dr->l);
             }
-        } else {
+        } else if (num->t == NUMBER_COMPLEX) {
             // TODO
         }
 	} else if (is_string(c)) {
@@ -952,20 +947,59 @@ static Number *exact_to_inexact(Number *num) {
     return num;
 }
 
+long gcd(long bg, long sm)
+{
+    if (bg < sm)
+    {
+        return gcd(sm, bg);
+    }
+
+    if(sm == 0) return bg;
+    long res = bg % sm;
+    while (res != 0)
+    {
+        bg = sm;
+        sm = res ;
+        res = bg % sm;
+    }
+    return sm;
+}
+
 static Number *inexact_to_exact(Number *num) {
     switch (num->t) {
     case NUMBER_LONG:
         return num;
     case NUMBER_DOUBLE:
-        // TODO: double to faction.
-        num->t = NUMBER_LONG;
-        num->l = num->d;
+    {
+        int n = 0;
+        double decimal = 0.0, inter = 0;
+        num->t = NUMBER_FRACTION;
+        decimal = modf(num->d, &inter);
+        if (decimal > 0.0) {
+            for(;;) {
+                decimal *= 10;
+                ++n;
+                if (decimal - (long)decimal < 0.000001) {
+                    break;
+                }
+            }
+        }
+        long bg = pow(10, n);
+        long divisor = gcd(bg, decimal);
+        num->fn.dr = malloc(sizeof(Number));
+        num->fn.dr->t = NUMBER_LONG;
+        num->fn.dr->l = bg / divisor;
+
+        num->fn.nr = malloc(sizeof(Number));
+        num->fn.nr->t = NUMBER_LONG;
+        num->fn.nr->l = decimal / divisor + num->fn.dr->l * inter;
         break;
+    }
     case NUMBER_FRACTION:
         return num;
     case NUMBER_COMPLEX:
-        inexact_to_exact(num->cx.rl);
-        inexact_to_exact(num->cx.im);
+        num->cx.rl = inexact_to_exact(num->cx.rl);
+        num->cx.im = inexact_to_exact(num->cx.im);
         break;
     }
     return num;
@@ -1107,9 +1141,9 @@ static Number *read_real(char **ppstart, char *pend, Exactness exact, Radix radi
     }
     *ppstart = pend;
     if (exact == EXACT)
-        inexact_to_exact(number);
+        number = inexact_to_exact(number);
     else if (exact == INEXACT)
-        exact_to_inexact(number);
+        number = exact_to_inexact(number);
 
 Error:
     if (buf) {

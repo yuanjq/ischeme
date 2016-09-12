@@ -111,6 +111,12 @@ static void print_err(IScheme *isc, String, String, ...);
 
 
 /***************** memory manager ***************/
+static void *memdup(void* src, int n) {
+    void* des = malloc(n);
+    if (des) memcpy(des, src, n);
+    return des;
+}
+
 static int seg_alloc(IScheme *isc, int num)
 {
     if (isc->last_seg + num >= SEGS_NUM) return 0;
@@ -204,7 +210,7 @@ static Cell *rplacd(Cell *c, Cell *d)    { return is_pair(c) ? c->pair->d = d : 
 
 static Cell *cons(Cell *a, Cell *d) {
     Cell *c = NULL;
-    Pair *pair = malloc(sizeof(Pair));
+    Pair *pair = new(Pair);
     if (pair) {
         c = cell_alloc();
         if (c) {
@@ -256,36 +262,6 @@ static Cell *mk_char(Char chr) {
     return c;
 }
 
-static Cell *mk_long(long n) {
-    Cell *c = NULL;
-    Number *num = malloc(sizeof(Number));
-    if (num) {
-        c = cell_alloc();
-        if (c) {
-            c->t = NUMBER;
-            c->num = num;
-            c->num->t = NUMBER_LONG;
-            c->num->l = n;
-        }
-    }
-    return c;
-}
-
-static Cell *mk_double(double n) {
-    Cell *c = NULL;
-    Number *num = malloc(sizeof(Number));
-    if (num) {
-        c = cell_alloc();
-        if (c) {
-            c->t = NUMBER;
-            c->num = num;
-            num->t = NUMBER_DOUBLE;
-            num->d = n;
-        }
-    }
-    return c;
-}
-
 static Cell *mk_number(Number *num) {
     Cell *c = cell_alloc();
     if (c) {
@@ -306,7 +282,7 @@ static Cell *mk_symbol(String s) {
 
 static Cell *mk_closure(Cell *a, Cell *e) {
     Cell *c = NULL;
-    Closure *clsr = malloc(sizeof(Closure));
+    Closure *clsr = new(Closure);
     if (clsr) {
         c = cell_alloc();
         if (c) {
@@ -328,7 +304,7 @@ static Cell *mk_proc(Cell *a, Cell *e) {
 
 static Cell *mk_port(FILE *f, String name, int t) {
     Cell *c = NULL;
-    Port *port = (Port*)malloc(sizeof(Port));
+    Port *port = new(Port);
     if (port) {
         c = cell_alloc();
         if (c) {
@@ -400,7 +376,7 @@ static inline Cell *pop_op(IScheme *isc, Cell *v) {
 }
 
 static void push_op(IScheme *isc, Op op, Cell *args, Cell *code) {
-    Conti *conti = (Conti*)malloc(sizeof(Conti));
+    Conti *conti = new(Conti);
     if (conti) {
         Cell *c = cell_alloc();
         if (c) {
@@ -823,10 +799,11 @@ static void write_number(Cell *port, Number *num, String s) {
             snprintf(s, STR_BUF_SIZE, "%ld/%ld", num->fn.nr->l, num->fn.dr->l);
         }
     } else if (num->t == NUMBER_COMPLEX) {
-        write_number(port, num->cx.rl->l, s);
+        write_number(port, num->cx.rl, s);
         write_char(port, '+');
-        write_number(port, num->cx.im->l, s);
+        write_number(port, num->cx.im, s);
         write_char(port, 'i');
+        return;
     }
     write_string(port, s);
 }
@@ -942,7 +919,7 @@ static Number *exact_to_inexact(Number *num) {
         num->t = NUMBER_DOUBLE;
         Number *nr = num->fn.nr;
         Number *dr = num->fn.dr;
-        num->d = nr->l / dr->l;
+        num->d = (double)nr->l / (double)dr->l;
         free(nr);
         free(dr);
         break;
@@ -955,11 +932,11 @@ static Number *exact_to_inexact(Number *num) {
     return num;
 }
 
-long gcd(long bg, long sm)
+long num_gcd(long bg, long sm)
 {
     if (bg < sm)
     {
-        return gcd(sm, bg);
+        return num_gcd(sm, bg);
     }
 
     if(sm == 0) return bg;
@@ -993,12 +970,12 @@ static Number *inexact_to_exact(Number *num) {
             }
         }
         long bg = pow(10, n);
-        long divisor = gcd(bg, decimal);
-        num->fn.dr = malloc(sizeof(Number));
+        long divisor = num_gcd(bg, decimal);
+        num->fn.dr = new(Number);
         num->fn.dr->t = NUMBER_LONG;
         num->fn.dr->l = bg / divisor;
 
-        num->fn.nr = malloc(sizeof(Number));
+        num->fn.nr = new(Number);
         num->fn.nr->t = NUMBER_LONG;
         num->fn.nr->l = decimal / divisor + num->fn.dr->l * inter;
         break;
@@ -1014,7 +991,7 @@ static Number *inexact_to_exact(Number *num) {
 }
 
 static Number *read_real(char **ppstart, char *pend, Exactness exact, Radix radix) {
-    Number *number = NULL;
+    Number *num = NULL;
     char *p = *ppstart;
     int c = *p;
     unsigned char sign = 0;
@@ -1100,7 +1077,7 @@ static Number *read_real(char **ppstart, char *pend, Exactness exact, Radix radi
         if (!find_num) {
             goto Error;
         }
-        Number *nr = malloc(sizeof(Number));
+        Number *nr = new(Number);
         if (!nr) {
             goto Error;
         }
@@ -1110,7 +1087,7 @@ static Number *read_real(char **ppstart, char *pend, Exactness exact, Radix radi
         buflen = pend - pstart + 1;
         memcpy(buf, pstart, buflen - 1);
         buf[buflen - 1] = '\0';
-        Number *dr = malloc(sizeof(Number));
+        Number *dr = new(Number);
         if (!dr) {
             free(nr);
             goto Error;
@@ -1118,21 +1095,21 @@ static Number *read_real(char **ppstart, char *pend, Exactness exact, Radix radi
         dr->t = NUMBER_LONG;
         dr->l = xtod(buf, buflen, radix);
 
-        number = malloc(sizeof(Number));
-        if (!number) {
+        num = new(Number);
+        if (!num) {
             free(nr);
             free(dr);
             goto Error;
         }
-        number->t = NUMBER_FRACTION;
-        number->fn.nr = nr;
-        number->fn.dr = dr;
+        num->t = NUMBER_FRACTION;
+        num->fn.nr = nr;
+        num->fn.dr = dr;
     } else {
         if (!find_num) {
             goto Error;
         }
-        number = malloc(sizeof(Number));
-        if (!number) {
+        num = new(Number);
+        if (!num) {
             goto Error;
         }
         buflen = pend - pstart + 1;
@@ -1140,24 +1117,24 @@ static Number *read_real(char **ppstart, char *pend, Exactness exact, Radix radi
         buf[buflen - 1] = '\0';
         double db = xtod(buf, buflen, radix);
         if (find_dot) {
-            number->t = NUMBER_DOUBLE;
-            number->d = db;
+            num->t = NUMBER_DOUBLE;
+            num->d = db;
         } else {
-            number->t = NUMBER_LONG;
-            number->l = db;
+            num->t = NUMBER_LONG;
+            num->l = db;
         }
     }
     *ppstart = pend;
     if (exact == EXACT)
-        number = inexact_to_exact(number);
+        num = inexact_to_exact(num);
     else if (exact == INEXACT)
-        number = exact_to_inexact(number);
+        num = exact_to_inexact(num);
 
 Error:
     if (buf) {
         free(buf);
     }
-    return number;
+    return num;
 }
 
 static Cell *read_number(char **ppstart, char *pend, Exactness exact, Radix radix) {
@@ -1181,9 +1158,18 @@ static Cell *read_number(char **ppstart, char *pend, Exactness exact, Radix radi
             if (p != pend - 1 || (c != 'i' && c != 'I')) {
                 goto Error;
             }
-            Number *num = malloc(sizeof(Number));
+            Number *num = new(Number);
             if (!num) {
                 goto Error;
+            }
+            
+            if (exact == NO_EXACTNESS &&
+                (real->t == NUMBER_DOUBLE || imag->t == NUMBER_DOUBLE)) 
+            {
+                if (real->t != NUMBER_DOUBLE)
+                    real = exact_to_inexact(real);
+                if (imag->t != NUMBER_DOUBLE)
+                    imag = exact_to_inexact(imag);
             }
             num->t = NUMBER_COMPLEX;
             num->cx.rl = real;
@@ -1194,7 +1180,7 @@ static Cell *read_number(char **ppstart, char *pend, Exactness exact, Radix radi
                 goto Error;
             }
 
-            Number *num = malloc(sizeof(Number));
+            Number *num = new(Number);
             if (!num) {
                 goto Error;
             }
@@ -1678,18 +1664,150 @@ static Cell *op_func2(IScheme *isc, int op) {
     return CELL_TRUE;
 }
 
+/**************** numeric utils *******************/
+static Number *num_mk_long(long l) {
+    Number *num = new(Number);
+    if (num) {
+        num->t = NUMBER_LONG;
+        num->l = l;
+    }
+    return num;
+}
+static Number *num_mk_double(double d) {
+    Number *num = new(Number);
+    if (num) {
+        num->t = NUMBER_DOUBLE;
+        num->d = d;
+    }
+    return num;
+}
+static Number *num_mk_fraction(long nr, long dr) {
+    Number *num = new(Number);
+    if (num) {
+        num->t = NUMBER_FRACTION;
+        num->fn.nr = new(Number);
+        if (num->fn.nr) {
+            num->fn.nr->t = NUMBER_LONG;
+            num->fn.nr->l = nr;
+        }
+
+        num->fn.dr = new(Number);
+        if (num->fn.dr) {
+            num->fn.dr->t = NUMBER_LONG;
+            num->fn.dr->l = dr;
+        }
+    }
+    return num;
+}
+
+static Number *num_mk_complex(Number *rl, Number *im) {
+    Number *num = new(Number);
+    if (num) {
+        num->t = NUMBER_COMPLEX;
+        num->cx.rl = memdup(rl, S(Number));
+        if (rl->t == NUMBER_FRACTION) {
+            num->cx.rl->fn = num_mk_fraction(rl->fn.nr->l, rl->fn.dr->l);
+        }
+        num->cx.im = memdup(im, S(Number));
+        if (im->t == NUMBER_FRACTION) {
+            num->cx.im->fn = num_mk_fraction(im->fn.nr->l, im->fn.dr->l);
+        }
+    }
+    return num;
+}
+
+static Number *_num_add(Number *a, Number *b) {
+    Number *sum = NULL;
+    switch (a->t) {
+    case NUMBER_LONG:
+        switch (b->t) {
+        case NUMBER_LONG:
+            num = num_mk_long(a->l + b->l);
+            break;
+        case NUMBER_FRACTION:
+        {
+            long dr = b->fn.dr->l;
+            num = num_mk_fraction(b->fn.nr->l + a->l * dr, dr);
+            break;
+        }
+        case NUMBER_COMPLEX:
+            num = num_mk_complex(_num_add(a, b->cx.rl), b->cx.im);
+            break;
+        default:
+        }
+        break;
+    case NUMBER_DOUBLE:
+        switch (b->t) {
+        case NUMBER_DOUBLE:
+            num = num_mk_double(a->d + b->d);
+            break;
+        case NUMBER_COMPLEX:
+            num = num_mk_complex(_num_add(a, b->cx.rl), b->cx.im);
+            break;
+        default:
+        }
+        break;
+    case NUMBER_FRACTION:
+        switch (b->t) {
+        case NUMBER_LONG:
+        {
+            long dr = a->fn.dr->l;
+            num = num_mk_fraction(a->fn.nr->l + b->l * dr, dr);
+            break;
+        }
+        case NUMBER_COMPLEX:
+            num = num_mk_complex(_num_add(a, b->cx.rl), b->cx.im);
+            break;
+        default:
+        }
+        break;
+    case NUMBER_COMPLEX:
+        switch (b->t) {
+        case NUMBER_COMPLEX:
+            num = num_mk_complex(_number_add(a->cx.rl, b->cx.rl),
+                                 _number_add(a->cx.im, b->cx.im));
+            break;
+        default:
+            num = num_mk_complex(_number_add(a->cx.rl, b), a->cx.im);
+            break;
+        }
+        break;
+    }
+    return num;
+}
+
+static Number *num_add(Number *a, Number *b) {
+    Number *sum = NULL;
+    if (a->t == NUMBER_DOUBLE ||
+        (a->t == NUMBER_COMPLEX && 
+            (a->cx.rl->t == NUMBER_DOUBLE ||
+             a->cx.im->t == NUMBER_DOUBLE))) {
+        if (b->t == NUMBER_LONG || b->t == NUMBER_FRACTION ||
+            (b->t == NUMBER_COMPLEX && b->cx.rl->t != NUMBER_DOUBLE))
+        b = exact_to_inexact(b);
+    } else {
+        if (b->t == NUMBER_DOUBLE ||
+            (b->t == NUMBER_COMPLEX && 
+                (b->cx.rl->t == NUMBER_DOUBLE ||
+                 b->cx.im->t == NUMBER_DOUBLE))) {
+            a = exact_to_inexact(a);
+        }
+    }
+    return _num_add(a, b);
+}
+
 static Cell *op_func3(IScheme *isc, int op) {
     switch (op) {
     case OP_ADD:
     {
-        int total=0;
-        for (Cell *lst = isc->args, *c; is_pair(lst); lst = cdr(lst)) {
-            total += car(lst)->num->l;
+        Number *sum = num_mk_long(0);
+        for (Cell *lst = isc->args, *c = NULL; is_pair(lst); lst = cdr(lst)) {
+            c = car(lst);
+            if (!is_number(c)) {
+                jmpErr(TypeError, "type of arguments error");
+            }
+            sum = num_add(sum, c->num);
         }
-        Number *num = malloc(sizeof(Number));
-        if (!num) jmpErr(MemoryError, "no memory.");
-        num->t = NUMBER_LONG;
-        num->l = total;
         popOp(isc, mk_number(num));
     }
     case OP_SUB:
@@ -1718,7 +1836,7 @@ static void init_readers() {
 }
 
 static void isc_init(FILE *in, String name) {
-    gp_isc = malloc(sizeof(IScheme));
+    gp_isc = new(IScheme);
     if (!gp_isc) {
         IError("no memory.");
         return;

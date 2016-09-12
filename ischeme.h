@@ -61,6 +61,9 @@ typedef Cell*(*EProc)(IScheme*, Cell*);
 #define T(c)                (c->t & T_MASK)
 #define M(c)                (c->t & M_MASK)
 
+#define S(t)                sizeof(t)
+#define new(t)              malloc(S(t))
+
 enum Ret {
     RET_FAILED = -1,
     RET_SUCCESSED = 0

@@ -793,15 +793,16 @@ static void write_number(Cell *port, Number *num, String s) {
     } else if (num->t == NUMBER_DOUBLE) {
         snprintf(s, STR_BUF_SIZE, "%lf", num->d);
     } else if (num->t == NUMBER_FRACTION) {
-        if (num->fn.nr->t == NUMBER_DOUBLE || num->fn.dr->t == NUMBER_DOUBLE) {
-            snprintf(s, STR_BUF_SIZE, "%lf/%lf", num->fn.nr->d, num->fn.dr->d);
-        } else {
-            snprintf(s, STR_BUF_SIZE, "%ld/%ld", num->fn.nr->l, num->fn.dr->l);
-        }
+        snprintf(s, STR_BUF_SIZE, "%ld/%ld", num->fn.nr->l, num->fn.dr->l);
     } else if (num->t == NUMBER_COMPLEX) {
+        Number *im = num->cx.im;
         write_number(port, num->cx.rl, s);
-        write_char(port, '+');
-        write_number(port, num->cx.im, s);
+        if ((im->t == NUMBER_LONG && im->l >= 0) ||
+            (im->t == NUMBER_DOUBLE && im->d >= 0) ||
+            (im->t == NUMBER_FRACTION && im->fn.nr->l >= 0)) {
+            write_char(port, '+');
+        }
+        write_number(port, im, s);
         write_char(port, 'i');
         return;
     }
@@ -906,6 +907,27 @@ static void print_cell(Cell *c, Cell *p) {
     write_cell(p, c, 0, 0, 1);
 }
 
+/**************** numeric operations *******************/
+long num_gcd(long bg, long sm)
+{
+    if (bg < 0) bg = -bg;
+    if (sm < 0) sm = -sm;
+    if (bg < sm)
+    {
+        return num_gcd(sm, bg);
+    }
+
+    if(sm == 0) return bg;
+    long res = bg % sm;
+    while (res != 0)
+    {
+        bg = sm;
+        sm = res ;
+        res = bg % sm;
+    }
+    return sm;
+}
+
 static Number *exact_to_inexact(Number *num) {
     switch (num->t) {
     case NUMBER_LONG:
@@ -930,24 +952,6 @@ static Number *exact_to_inexact(Number *num) {
         break;
     }
     return num;
-}
-
-long num_gcd(long bg, long sm)
-{
-    if (bg < sm)
-    {
-        return num_gcd(sm, bg);
-    }
-
-    if(sm == 0) return bg;
-    long res = bg % sm;
-    while (res != 0)
-    {
-        bg = sm;
-        sm = res ;
-        res = bg % sm;
-    }
-    return sm;
 }
 
 static Number *inexact_to_exact(Number *num) {
@@ -990,11 +994,299 @@ static Number *inexact_to_exact(Number *num) {
     return num;
 }
 
+static Number *num_mk_long(long l) {
+    Number *num = new(Number);
+    if (num) {
+        num->t = NUMBER_LONG;
+        num->l = l;
+    }
+    return num;
+}
+static Number *num_mk_double(double d) {
+    Number *num = new(Number);
+    if (num) {
+        num->t = NUMBER_DOUBLE;
+        num->d = d;
+    }
+    return num;
+}
+static Number *num_mk_fraction(long nr, long dr) {
+    char s = 1;
+    long gcd = num_gcd(nr, dr);
+    Number *num = new(Number);
+    if (num) {
+        if (dr < 0) s = -1;
+        num->t = NUMBER_FRACTION;
+        num->fn.nr = new(Number);
+        if (num->fn.nr) {
+            num->fn.nr->t = NUMBER_LONG;
+            num->fn.nr->l = s * nr / gcd;
+        }
+
+        num->fn.dr = new(Number);
+        if (num->fn.dr) {
+            num->fn.dr->t = NUMBER_LONG;
+            num->fn.dr->l = s * dr / gcd;
+        }
+    }
+    return num;
+}
+
+static Number *num_mk_complex(Number *rl, Number *im) {
+    Number *num = new(Number);
+    if (num) {
+        num->t = NUMBER_COMPLEX;
+        num->cx.rl = memdup(rl, S(Number));
+        if (rl->t == NUMBER_FRACTION) {
+            num->cx.rl = num_mk_fraction(rl->fn.nr->l, rl->fn.dr->l);
+        }
+        num->cx.im = memdup(im, S(Number));
+        if (im->t == NUMBER_FRACTION) {
+            num->cx.im = num_mk_fraction(im->fn.nr->l, im->fn.dr->l);
+        }
+    }
+    return num;
+}
+
+static Number *_num_calcu(int op, Number *a, Number *b) {
+    Number *num = NULL;
+    long nr, dr, gcd;
+    switch (a->t) {
+    case NUMBER_LONG:
+        switch (b->t) {
+        case NUMBER_LONG:
+            switch (op) {
+            case OP_ADD:
+                num = num_mk_long(a->l + b->l);
+                break;
+            case OP_SUB:
+                num = num_mk_long(a->l - b->l);
+                break;
+            case OP_MULTI:
+                num = num_mk_long(a->l * b->l);
+                break;
+            case OP_DIV:
+            {
+                gcd = num_gcd(a->l, b->l);
+                if (gcd == b->l) {
+                    num = num_mk_long(a->l / gcd);
+                } else {
+                    num = num_mk_fraction(a->l, b->l);
+                }
+                break;
+            }}
+            break;
+        case NUMBER_FRACTION:
+        {
+            nr = b->fn.nr->l;
+            dr = b->fn.dr->l;
+            switch (op) {
+            case OP_ADD:
+                nr = nr + a->l * dr;
+                num = num_mk_fraction(nr, dr);
+                break;
+            case OP_SUB:
+                nr = a->l * dr - nr;
+                num = num_mk_fraction(nr, dr);
+                break;
+            case OP_MULTI:
+            {
+                nr = a->l * nr;
+                gcd = num_gcd(a->l * b->fn.nr->l, dr);
+                if (gcd == dr)
+                    num = num_mk_long(nr / dr);
+                else
+                    num = num_mk_fraction(nr, dr);
+                break;
+            }
+            case OP_DIV:
+            {
+                nr = a->l * dr;
+                dr = b->fn.nr->l;
+                gcd = num_gcd(nr, dr);
+                if (gcd == nr)
+                    num = num_mk_long(nr / dr);
+                else
+                    num = num_mk_fraction(nr, dr);
+                break;
+            }}
+            break;
+        }
+        case NUMBER_COMPLEX:
+            switch (op) {
+            case OP_ADD:
+            case OP_SUB:
+                num = num_mk_complex(_num_calcu(op, a, b->cx.rl), b->cx.im);
+                break;
+            case OP_MULTI:
+                num = num_mk_complex(_num_calcu(op, a, b->cx.rl), _num_calcu(op, a, b->cx.im));
+                break;
+            case OP_DIV:
+            {
+                Number *rl, *im, *nr, *dr;
+
+                nr = _num_calcu(OP_MULTI, a, b->cx.rl);
+                dr = _num_calcu(OP_ADD, _num_calcu(OP_MULTI, b->cx.rl, b->cx.rl), _num_calcu(OP_MULTI, b->cx.im, b->cx.im));
+                rl = _num_calcu(OP_DIV, nr, dr);
+                
+                nr = _num_calcu(OP_MULTI, num_mk_long(-1), _num_calcu(OP_MULTI, a, b->cx.im));
+                im = _num_calcu(OP_DIV, nr, dr);
+                num = num_mk_complex(rl, im);
+                break;
+            }}
+            break;
+        }
+        break;
+    case NUMBER_DOUBLE:
+        switch (b->t) {
+        case NUMBER_DOUBLE:
+            switch (op) {
+            case OP_ADD:
+                num = num_mk_double(a->d + b->d);
+                break;
+            case OP_SUB:
+                num = num_mk_double(a->d - b->d);
+                break;
+            case OP_MULTI:
+                num = num_mk_double(a->d * b->d);
+                break;
+            case OP_DIV:
+                num = num_mk_double(a->d / b->d);
+            }
+            break;
+        case NUMBER_COMPLEX:
+            switch (op) {
+            case OP_ADD:
+            case OP_SUB:
+                num = num_mk_complex(_num_calcu(op, a, b->cx.rl), b->cx.im);
+                break;
+            case OP_MULTI:
+                num = num_mk_complex(_num_calcu(op, a, b->cx.rl), _num_calcu(op, a, b->cx.im));
+                break;
+            case OP_DIV:
+            {
+                double dr = pow(b->cx.rl->d, 2) + pow(b->cx.im->d, 2);
+                num = num_mk_complex(num_mk_double(a->d * b->cx.rl->d / dr), num_mk_double(-1 * a->d * b->cx.im->d / dr));
+                break;
+            }}
+            break;
+        }
+        break;
+    case NUMBER_FRACTION:
+        switch (b->t) {
+        case NUMBER_LONG:
+            num = _num_calcu(op, b, a);
+            break;
+        case NUMBER_FRACTION:
+        {
+            switch (op) {
+            case OP_ADD:
+                nr = a->fn.nr->l * b->fn.dr->l + a->fn.dr->l * b->fn.nr->l;
+                dr = a->fn.dr->l * b->fn.dr->l;
+                break;
+            case OP_SUB:
+                nr = a->fn.nr->l * b->fn.dr->l - a->fn.dr->l * b->fn.nr->l;
+                dr = a->fn.dr->l * b->fn.dr->l;
+                break;
+            case OP_MULTI:
+                nr = a->fn.nr->l * b->fn.nr->l;
+                dr = a->fn.dr->l * b->fn.dr->l;
+                break;
+            case OP_DIV:
+                nr = a->fn.nr->l * b->fn.dr->l;
+                dr = a->fn.dr->l * b->fn.nr->l;
+                break;
+            }
+            gcd = num_gcd(nr, dr);
+            if (gcd == dr)
+                num = num_mk_long(nr / dr);
+            else
+                num = num_mk_fraction(nr, dr);
+            break;
+        }
+        case NUMBER_COMPLEX:
+            switch (op) {
+            case OP_ADD:
+            case OP_SUB:
+                num = num_mk_complex(_num_calcu(op, a, b->cx.rl), b->cx.im);
+                break;
+            case OP_MULTI:
+                num = num_mk_complex(_num_calcu(OP_MULTI, a, b->cx.rl), _num_calcu(OP_MULTI, a, b->cx.im));
+                break;
+            case OP_DIV:
+            {
+                Number *rl, *im, *nr, *dr;
+
+                nr = _num_calcu(OP_MULTI, a, b->cx.rl);
+                dr = _num_calcu(OP_ADD, _num_calcu(OP_MULTI, b->cx.rl, b->cx.rl), _num_calcu(OP_MULTI, b->cx.im, b->cx.im));
+                rl = _num_calcu(OP_DIV, nr, dr);
+                
+                nr = _num_calcu(OP_MULTI, num_mk_long(-1), _num_calcu(OP_MULTI, a, b->cx.im));
+                im = _num_calcu(OP_DIV, nr, dr);
+                num = num_mk_complex(rl, im);
+                break;
+            }}
+        }
+        break;
+    case NUMBER_COMPLEX:
+        switch (b->t) {
+        case NUMBER_COMPLEX:
+            switch (op) {
+            case OP_ADD:
+            case OP_SUB:
+                num = num_mk_complex(_num_calcu(op, a->cx.rl, b->cx.rl),
+                                     _num_calcu(op, a->cx.im, b->cx.im));
+                break;
+            case OP_MULTI:
+                num = num_mk_complex(_num_calcu(OP_SUB, _num_calcu(OP_MULTI, a->cx.rl, b->cx.rl), _num_calcu(OP_MULTI, a->cx.im, b->cx.im)),
+                                     _num_calcu(OP_ADD, _num_calcu(OP_MULTI, a->cx.im, b->cx.rl), _num_calcu(OP_MULTI, a->cx.rl, b->cx.im)));
+                break;
+            case OP_DIV:
+            {
+                Number *rl, *im, *nr, *dr;
+                nr = _num_calcu(OP_ADD, _num_calcu(OP_MULTI, a->cx.rl, b->cx.rl), _num_calcu(OP_MULTI, a->cx.im, b->cx.im));
+                dr = _num_calcu(OP_ADD, _num_calcu(OP_MULTI, b->cx.rl, b->cx.rl), _num_calcu(OP_MULTI, b->cx.im, b->cx.im));
+                rl = _num_calcu(OP_MULTI, nr, dr);
+
+                nr = _num_calcu(OP_SUB, _num_calcu(OP_MULTI, a->cx.im, b->cx.rl), _num_calcu(OP_MULTI, a->cx.rl, b->cx.im));
+                im = _num_calcu(OP_MULTI, nr, dr);
+                num = num_mk_complex(rl, im);
+                break;
+            }}
+            break;
+        default:
+            num = _num_calcu(op, b, a);
+        }
+        break;
+    }
+    return num;
+}
+
+static Number *num_calcu(int op, Number *a, Number *b) {
+    Number *sum = NULL;
+    if (a->t == NUMBER_DOUBLE ||
+        (a->t == NUMBER_COMPLEX && 
+            (a->cx.rl->t == NUMBER_DOUBLE ||
+             a->cx.im->t == NUMBER_DOUBLE))) {
+        if (b->t == NUMBER_LONG || b->t == NUMBER_FRACTION ||
+            (b->t == NUMBER_COMPLEX && b->cx.rl->t != NUMBER_DOUBLE))
+        b = exact_to_inexact(b);
+    } else {
+        if (b->t == NUMBER_DOUBLE ||
+            (b->t == NUMBER_COMPLEX && 
+                (b->cx.rl->t == NUMBER_DOUBLE ||
+                 b->cx.im->t == NUMBER_DOUBLE))) {
+            a = exact_to_inexact(a);
+        }
+    }
+    return _num_calcu(op, a, b);
+}
+
 static Number *read_real(char **ppstart, char *pend, Exactness exact, Radix radix) {
     Number *num = NULL;
     char *p = *ppstart;
     int c = *p;
-    unsigned char sign = 0;
+    char sign = 1;
     int buflen = 0;
     bool find_num = FALSE;
     bool find_dot = FALSE;
@@ -1077,33 +1369,13 @@ static Number *read_real(char **ppstart, char *pend, Exactness exact, Radix radi
         if (!find_num) {
             goto Error;
         }
-        Number *nr = new(Number);
-        if (!nr) {
-            goto Error;
-        }
-        nr->t = NUMBER_LONG;
-        nr->l = xtod(buf, buflen, radix);
-
+        long nr = xtod(buf, buflen, radix);
         buflen = pend - pstart + 1;
         memcpy(buf, pstart, buflen - 1);
         buf[buflen - 1] = '\0';
-        Number *dr = new(Number);
-        if (!dr) {
-            free(nr);
-            goto Error;
-        }
-        dr->t = NUMBER_LONG;
-        dr->l = xtod(buf, buflen, radix);
-
-        num = new(Number);
-        if (!num) {
-            free(nr);
-            free(dr);
-            goto Error;
-        }
-        num->t = NUMBER_FRACTION;
-        num->fn.nr = nr;
-        num->fn.dr = dr;
+        
+        long dr = xtod(buf, buflen, radix);
+        num = num_mk_fraction(sign * nr, dr);
     } else {
         if (!find_num) {
             goto Error;
@@ -1118,10 +1390,10 @@ static Number *read_real(char **ppstart, char *pend, Exactness exact, Radix radi
         double db = xtod(buf, buflen, radix);
         if (find_dot) {
             num->t = NUMBER_DOUBLE;
-            num->d = db;
+            num->d = sign * db;
         } else {
             num->t = NUMBER_LONG;
-            num->l = db;
+            num->l = sign * db;
         }
     }
     *ppstart = pend;
@@ -1158,37 +1430,29 @@ static Cell *read_number(char **ppstart, char *pend, Exactness exact, Radix radi
             if (p != pend - 1 || (c != 'i' && c != 'I')) {
                 goto Error;
             }
-            Number *num = new(Number);
-            if (!num) {
-                goto Error;
-            }
-            
-            if (exact == NO_EXACTNESS &&
-                (real->t == NUMBER_DOUBLE || imag->t == NUMBER_DOUBLE)) 
-            {
-                if (real->t != NUMBER_DOUBLE)
-                    real = exact_to_inexact(real);
-                if (imag->t != NUMBER_DOUBLE)
-                    imag = exact_to_inexact(imag);
-            }
-            num->t = NUMBER_COMPLEX;
-            num->cx.rl = real;
-            num->cx.im = imag;
-            return mk_number(num);
         } else if (c == 'i' || c == 'I') {
             if (p != pend - 1) {
                 goto Error;
             }
-
-            Number *num = new(Number);
-            if (!num) {
-                goto Error;
-            }
-            num->t = NUMBER_COMPLEX;
-            num->cx.rl = 0;
-            num->cx.im = real;
-            return mk_number(num);
+            imag = real;
+            real = num_mk_long(0);
         }
+        if (exact == NO_EXACTNESS &&
+            (real->t == NUMBER_DOUBLE || imag->t == NUMBER_DOUBLE)) 
+        {
+            if (real->t != NUMBER_DOUBLE)
+                real = exact_to_inexact(real);
+            if (imag->t != NUMBER_DOUBLE)
+                imag = exact_to_inexact(imag);
+        }
+        Number *num = new(Number);
+        if (!num) {
+            goto Error;
+        }     
+        num->t = NUMBER_COMPLEX;
+        num->cx.rl = real;
+        num->cx.im = imag;
+        return mk_number(num);
     }
     
 Error:
@@ -1664,157 +1928,38 @@ static Cell *op_func2(IScheme *isc, int op) {
     return CELL_TRUE;
 }
 
-/**************** numeric utils *******************/
-static Number *num_mk_long(long l) {
-    Number *num = new(Number);
-    if (num) {
-        num->t = NUMBER_LONG;
-        num->l = l;
-    }
-    return num;
-}
-static Number *num_mk_double(double d) {
-    Number *num = new(Number);
-    if (num) {
-        num->t = NUMBER_DOUBLE;
-        num->d = d;
-    }
-    return num;
-}
-static Number *num_mk_fraction(long nr, long dr) {
-    Number *num = new(Number);
-    if (num) {
-        num->t = NUMBER_FRACTION;
-        num->fn.nr = new(Number);
-        if (num->fn.nr) {
-            num->fn.nr->t = NUMBER_LONG;
-            num->fn.nr->l = nr;
-        }
-
-        num->fn.dr = new(Number);
-        if (num->fn.dr) {
-            num->fn.dr->t = NUMBER_LONG;
-            num->fn.dr->l = dr;
-        }
-    }
-    return num;
-}
-
-static Number *num_mk_complex(Number *rl, Number *im) {
-    Number *num = new(Number);
-    if (num) {
-        num->t = NUMBER_COMPLEX;
-        num->cx.rl = memdup(rl, S(Number));
-        if (rl->t == NUMBER_FRACTION) {
-            num->cx.rl->fn = num_mk_fraction(rl->fn.nr->l, rl->fn.dr->l);
-        }
-        num->cx.im = memdup(im, S(Number));
-        if (im->t == NUMBER_FRACTION) {
-            num->cx.im->fn = num_mk_fraction(im->fn.nr->l, im->fn.dr->l);
-        }
-    }
-    return num;
-}
-
-static Number *_num_add(Number *a, Number *b) {
-    Number *sum = NULL;
-    switch (a->t) {
-    case NUMBER_LONG:
-        switch (b->t) {
-        case NUMBER_LONG:
-            num = num_mk_long(a->l + b->l);
-            break;
-        case NUMBER_FRACTION:
-        {
-            long dr = b->fn.dr->l;
-            num = num_mk_fraction(b->fn.nr->l + a->l * dr, dr);
-            break;
-        }
-        case NUMBER_COMPLEX:
-            num = num_mk_complex(_num_add(a, b->cx.rl), b->cx.im);
-            break;
-        default:
-        }
-        break;
-    case NUMBER_DOUBLE:
-        switch (b->t) {
-        case NUMBER_DOUBLE:
-            num = num_mk_double(a->d + b->d);
-            break;
-        case NUMBER_COMPLEX:
-            num = num_mk_complex(_num_add(a, b->cx.rl), b->cx.im);
-            break;
-        default:
-        }
-        break;
-    case NUMBER_FRACTION:
-        switch (b->t) {
-        case NUMBER_LONG:
-        {
-            long dr = a->fn.dr->l;
-            num = num_mk_fraction(a->fn.nr->l + b->l * dr, dr);
-            break;
-        }
-        case NUMBER_COMPLEX:
-            num = num_mk_complex(_num_add(a, b->cx.rl), b->cx.im);
-            break;
-        default:
-        }
-        break;
-    case NUMBER_COMPLEX:
-        switch (b->t) {
-        case NUMBER_COMPLEX:
-            num = num_mk_complex(_number_add(a->cx.rl, b->cx.rl),
-                                 _number_add(a->cx.im, b->cx.im));
-            break;
-        default:
-            num = num_mk_complex(_number_add(a->cx.rl, b), a->cx.im);
-            break;
-        }
-        break;
-    }
-    return num;
-}
-
-static Number *num_add(Number *a, Number *b) {
-    Number *sum = NULL;
-    if (a->t == NUMBER_DOUBLE ||
-        (a->t == NUMBER_COMPLEX && 
-            (a->cx.rl->t == NUMBER_DOUBLE ||
-             a->cx.im->t == NUMBER_DOUBLE))) {
-        if (b->t == NUMBER_LONG || b->t == NUMBER_FRACTION ||
-            (b->t == NUMBER_COMPLEX && b->cx.rl->t != NUMBER_DOUBLE))
-        b = exact_to_inexact(b);
-    } else {
-        if (b->t == NUMBER_DOUBLE ||
-            (b->t == NUMBER_COMPLEX && 
-                (b->cx.rl->t == NUMBER_DOUBLE ||
-                 b->cx.im->t == NUMBER_DOUBLE))) {
-            a = exact_to_inexact(a);
-        }
-    }
-    return _num_add(a, b);
-}
-
 static Cell *op_func3(IScheme *isc, int op) {
+    Number *ret = NULL;
+    Cell *lst = isc->args;
     switch (op) {
     case OP_ADD:
-    {
-        Number *sum = num_mk_long(0);
-        for (Cell *lst = isc->args, *c = NULL; is_pair(lst); lst = cdr(lst)) {
+    case OP_SUB:
+    case OP_MULTI:
+    case OP_DIV:
+        if (op == OP_ADD || op == OP_SUB) {
+            ret = num_mk_long(0);
+        } else {
+            if (op == OP_DIV && length(lst) > 1) {
+                Cell *c = car(lst);
+                if (!is_number(c)) {
+                    jmpErr(TypeError, "type of arguments error");
+                }
+                ret = c->num;
+                lst = cdr(lst);
+            } else {
+                ret = num_mk_long(1);
+            }
+        }
+        for (Cell *c = NULL; is_pair(lst); lst = cdr(lst)) {
             c = car(lst);
             if (!is_number(c)) {
                 jmpErr(TypeError, "type of arguments error");
             }
-            sum = num_add(sum, c->num);
+            ret = num_calcu(op, ret, c->num);
         }
-        popOp(isc, mk_number(num));
-    }
-    case OP_SUB:
+        popOp(isc, mk_number(ret));
         break;
-    case OP_MULTI:
-        break;
-    case OP_DIV:
+    default:
         break;
     }
     return CELL_TRUE;

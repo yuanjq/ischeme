@@ -120,7 +120,8 @@ static bool is_outport(Cell *c) { return is_port(c) && port_type(c) & PORT_OUTPU
 static bool is_continue(Cell *c) { return c && T(c) == CONTINUE; }
 static bool is_continues(Cell *c) { return c && T(c) == CONTINUES; }
 static bool is_exception(Cell *c) { return c && T(c) == EXCEPTION; }
-static bool is_port_eof(Cell *c) { return c && T(c) == PORT && port_type(c) & PORT_EOF; }
+//static bool is_port_eof(Cell *c) { return c && T(c) == PORT && port_type(c) & PORT_EOF; }
+static bool is_port_eof(Cell *c) { return c && T(c) == PORT && ((port_type(c) & PORT_FILE) && feof(port_file(c)) || (port_type(c) & PORT_STRING) && port_string_pos(c) == port_string_end(c)); }
 static bool is_immutable(Cell *c) { return c && cell_type(c) & M_IMMUTABLE; }
 
 static bool is_interactive(Cell *ctx) {
@@ -380,7 +381,7 @@ Cell *write_string(Cell *ctx, Cell *out, char *s) {
 }
 
 static inline int get_char(Cell *in) {
-    if (port_type(in) & PORT_EOF) return EOF;
+    if (is_port_eof(in)) return EOF;
     int c = 0;
     if (port_type(in) & PORT_FILE) {
         c = fgetc(port_file(in));
@@ -390,7 +391,6 @@ static inline int get_char(Cell *in) {
         else
             c = *port_string_pos(in)++;
     }
-    if (c == EOF) port_type(in) |= PORT_EOF;
     return c;
 }
 
@@ -726,7 +726,7 @@ static Cell *write_number(Cell *ctx, Cell *port, Cell *num, char *s) {
         t = number_type(im);
         write_number(ctx, port, number_cx_rl(num), s);
         if ((t == NUMBER_LONG && number_long(im) >= 0) ||
-            (t == NUMBER_DOUBLE && number_long(im) >= 0) ||
+            (t == NUMBER_DOUBLE && number_double(im) >= 0) ||
             (t == NUMBER_FRACTION && number_long(number_fn_nr(im)) >= 0)) {
             write_char(ctx, port, '+');
         }
@@ -1040,10 +1040,13 @@ static Cell *_num_calcu(Cell *ctx, int op, Cell *a, Cell *b) {
                 break;
             }}
             break;
+        case NUMBER_DOUBLE:
+            num = _num_calcu(ctx, op, exact_to_inexact(ctx, a), b);
+            break;
         case NUMBER_FRACTION:
         {
-            nr = number_long(number_fn_nr(num));
-            dr = number_long(number_fn_dr(num));
+            nr = number_long(number_fn_nr(b));
+            dr = number_long(number_fn_dr(b));
             switch (op) {
             case OP_ADD:
                 nr = nr + number_long(a) * dr;
@@ -1088,7 +1091,6 @@ static Cell *_num_calcu(Cell *ctx, int op, Cell *a, Cell *b) {
             case OP_DIV:
             {
                 Cell *rl, *im, *nr, *dr;
-
                 nr = _num_calcu(ctx, OP_MULTI, a, number_cx_rl(b));
                 dr = _num_calcu(ctx, OP_ADD, _num_calcu(ctx, OP_MULTI, number_cx_rl(b), number_cx_rl(b)), _num_calcu(ctx, OP_MULTI, number_cx_im(b), number_cx_im(b)));
                 rl = _num_calcu(ctx, OP_DIV, nr, dr);
@@ -1102,7 +1104,11 @@ static Cell *_num_calcu(Cell *ctx, int op, Cell *a, Cell *b) {
         }
         break;
     case NUMBER_DOUBLE:
-        switch (b->t) {
+        switch (number_type(b)) {
+        case NUMBER_LONG:
+        case NUMBER_FRACTION:
+            num = _num_calcu(ctx, op, a, exact_to_inexact(ctx, b));
+            break;
         case NUMBER_DOUBLE:
             switch (op) {
             case OP_ADD:
@@ -1122,14 +1128,14 @@ static Cell *_num_calcu(Cell *ctx, int op, Cell *a, Cell *b) {
             switch (op) {
             case OP_ADD:
             case OP_SUB:
-                num = mk_complex(ctx, _num_calcu(ctx, op, a, number_cx_rl(a)), number_cx_rl(b));
+                num = mk_complex(ctx, _num_calcu(ctx, op, a, number_cx_rl(b)), number_cx_im(b));
                 break;
             case OP_MULTI:
                 num = mk_complex(ctx, _num_calcu(ctx, op, a, number_cx_rl(b)), _num_calcu(ctx, op, a, number_cx_im(b)));
                 break;
             case OP_DIV:
             {
-                double dr = pow(number_double(number_cx_rl(a)), 2) + pow(number_double(number_cx_im(b)), 2);
+                double dr = pow(number_double(number_cx_rl(b)), 2) + pow(number_double(number_cx_im(b)), 2);
                 num = mk_complex(ctx, mk_double(ctx, number_double(a) * number_double(number_cx_rl(b)) / dr), mk_double(ctx, -1 * number_double(a) * number_double(number_cx_im(b)) / dr));
                 break;
             }}
@@ -1137,9 +1143,32 @@ static Cell *_num_calcu(Cell *ctx, int op, Cell *a, Cell *b) {
         }
         break;
     case NUMBER_FRACTION:
-        switch (b->t) {
+        switch (number_type(b)) {
         case NUMBER_LONG:
-            num = _num_calcu(ctx, op, b, a);
+            switch (op) {
+            case OP_ADD:
+            case OP_MULTI:
+                num = _num_calcu(ctx, op, b, a);
+                break;
+            case OP_SUB:
+                nr = number_long(number_fn_nr(a));
+                dr = number_long(number_fn_dr(a));
+                nr = nr - number_long(b) * dr;
+                num = mk_fraction(ctx, nr, dr);
+                break;
+            case OP_DIV:
+                nr = number_long(number_fn_nr(a));
+                dr = number_long(number_fn_nr(a)) * number_long(b);
+                gcd = num_gcd(nr, dr);
+                if (gcd == nr)
+                    num = mk_long(ctx, nr / dr);
+                else
+                    num = mk_fraction(ctx, nr, dr);
+                break;
+            }
+            break;
+        case NUMBER_DOUBLE:
+            num = _num_calcu(ctx, op, exact_to_inexact(ctx, a), b);
             break;
         case NUMBER_FRACTION:
         {
@@ -1180,7 +1209,6 @@ static Cell *_num_calcu(Cell *ctx, int op, Cell *a, Cell *b) {
             case OP_DIV:
             {
                 Cell *rl, *im, *nr, *dr;
-
                 nr = _num_calcu(ctx, OP_MULTI, a, number_cx_rl(b));
                 dr = _num_calcu(ctx, OP_ADD, _num_calcu(ctx, OP_MULTI, number_cx_rl(b), number_cx_rl(b)), _num_calcu(ctx, OP_MULTI, number_cx_im(b), number_cx_im(b)));
                 rl = _num_calcu(ctx, OP_DIV, nr, dr);
@@ -1193,7 +1221,7 @@ static Cell *_num_calcu(Cell *ctx, int op, Cell *a, Cell *b) {
         }
         break;
     case NUMBER_COMPLEX:
-        switch (b->t) {
+        switch (number_type(b)) {
         case NUMBER_COMPLEX:
             switch (op) {
             case OP_ADD:
@@ -1210,16 +1238,27 @@ static Cell *_num_calcu(Cell *ctx, int op, Cell *a, Cell *b) {
                 Cell *rl, *im, *nr, *dr;
                 nr = _num_calcu(ctx, OP_ADD, _num_calcu(ctx, OP_MULTI, number_cx_rl(a), number_cx_rl(b)), _num_calcu(ctx, OP_MULTI, number_cx_im(a), number_cx_im(b)));
                 dr = _num_calcu(ctx, OP_ADD, _num_calcu(ctx, OP_MULTI, number_cx_rl(b), number_cx_rl(b)), _num_calcu(ctx, OP_MULTI, number_cx_im(b), number_cx_im(b)));
-                rl = _num_calcu(ctx, OP_MULTI, nr, dr);
+                rl = _num_calcu(ctx, OP_DIV, nr, dr);
 
                 nr = _num_calcu(ctx, OP_SUB, _num_calcu(ctx, OP_MULTI, number_cx_im(a), number_cx_rl(b)), _num_calcu(ctx, OP_MULTI, number_cx_rl(a), number_cx_im(b)));
-                im = _num_calcu(ctx, OP_MULTI, nr, dr);
+                im = _num_calcu(ctx, OP_DIV, nr, dr);
                 num = mk_complex(ctx, rl, im);
                 break;
             }}
             break;
         default:
-            num = _num_calcu(ctx, op, b, a);
+            switch (op) {
+            case OP_ADD:
+            case OP_MULTI:
+                num = _num_calcu(ctx, op, b, a);
+                break;
+            case OP_SUB:
+                num = mk_complex(ctx, _num_calcu(ctx, op, number_cx_rl(a), b), number_cx_im(a));
+                break;
+            case OP_DIV:
+                num = mk_complex(ctx, _num_calcu(ctx, op, number_cx_rl(a), b), _num_calcu(ctx, op, number_cx_im(a), b));
+                break;
+            }
         }
         break;
     }
@@ -1400,14 +1439,17 @@ static Cell *read_number(Cell *ctx, char *pstart, uint size, Exactness exact, Ra
                 goto Error;
             }
             imag = real;
-            real = mk_long(ctx, 0);
+            if (number_type(imag) == NUMBER_LONG || number_type(imag) == NUMBER_FRACTION)
+                real = mk_long(ctx, 0);
+            else
+                real = mk_double(ctx, 0);
         }
         if (exact == NO_EXACTNESS &&
-            (real->t == NUMBER_DOUBLE || imag->t == NUMBER_DOUBLE)) 
+            (number_type(real) == NUMBER_DOUBLE || number_type(imag) == NUMBER_DOUBLE)) 
         {
-            if (real->t != NUMBER_DOUBLE)
+            if (number_type(real) != NUMBER_DOUBLE)
                 real = exact_to_inexact(ctx, real);
-            if (imag->t != NUMBER_DOUBLE)
+            if (number_type(imag) != NUMBER_DOUBLE)
                 imag = exact_to_inexact(ctx, imag);
         }
         Cell *num = number_new(ctx);
@@ -1654,7 +1696,7 @@ static Cell *op_func0(Cell *ctx, int op) {
     Cell *c;
     switch (op) {
     case OP_REPL_LOOP:
-        if (port_type(ctx_inport(ctx)) & PORT_EOF) {
+        if (is_port_eof(ctx_inport(ctx))) {
             if (ctx_file_idx(ctx) == 0)
                 return CELL_FALSE;
             pop_load_file(ctx);

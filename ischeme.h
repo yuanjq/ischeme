@@ -40,6 +40,9 @@ typedef struct _OpCode      OpCode;
 typedef struct _SegFreeList SegFreeList;
 typedef struct _Segment     Segment;
 typedef struct _Context     Context;
+typedef struct _Matcher     Matcher;
+typedef struct _Expander    Expander;
+typedef struct _Macro       Macro;
 
 typedef enum _Op            Op;
 typedef enum _Radix         Radix;
@@ -49,6 +52,8 @@ typedef enum _PortType      PortType;
 typedef enum _Token         Token;
 typedef enum _Type          Type;
 typedef enum _Error         Error;
+typedef enum _MatcherType   MatcherType;
+typedef enum _ExpanderType  ExpanderType;
 
 typedef Cell* (*OpFunc)(Cell*, int);
 typedef Cell*(*Reader)(Cell*, int);
@@ -81,8 +86,10 @@ typedef Cell*(*EProc)(Cell*, Cell*);
 #define cell_new(_c,_x,_t)      ({ Cell *c = cell_alloc(_c, cell_sizeof(_x));\
                                    if (c) c->t = _t; c;})
 
+#define syntax_new(c)           cell_new(c, op, SYNTAX)
+#define iproc_new(c)            cell_new(c, op, IPROC)
+#define macro_new(c)            cell_new(c, op, MACRO)
 #define char_new(c)             cell_new(c, chr, CHAR)
-//#define string_new(c)           cell_new(c, str, STRING)
 #define symbol_new(c)           cell_new(c, str, SYMBOL)
 #define number_new(c)           cell_new(c, num, NUMBER)
 #define pair_new(c)             cell_new(c, pair, PAIR)
@@ -92,8 +99,15 @@ typedef Cell*(*EProc)(Cell*, Cell*);
 #define closure_new(c)          cell_new(c, clos, CLOSURE)
 #define context_new(c)          cell_new(c, ctx, CONTEXT)
 #define exception_new(c)        cell_new(c, excpt, EXCEPTION)
+#define matcher_new(c)          cell_new(c, mt, MATCHER)
+#define expander_new(c)         cell_new(c, expd, EXPANDER)
 
 #define cell_type(c)            (c->t)
+#define syntax_op(c)            (c->op)
+#define iproc_op(c)             (c->op)
+#define macro_matchers(c)       (cell_field(c,macro,mchs))
+#define macro_env(c)            (cell_field(c,macro,env))
+
 #define char_value(c)           (c->chr)
 #define string_size(s)          (cell_field(s,str,size))
 #define string_data(s)          (cell_field(s,str,data))
@@ -136,6 +150,16 @@ typedef Cell*(*EProc)(Cell*, Cell*);
 #define exception_src(e)        (cell_field(e,excpt,src))
 #define exception_trg(e)        (cell_field(e,excpt,trg))
 
+#define matcher_type(m)         (cell_field(m,mt,t))
+#define matcher_repeat(m)       (cell_field(m,mt,rept))
+#define matcher_name(m)         (cell_field(m,mt,name))
+#define matcher_value(m)        (cell_field(m,mt,value))
+
+#define expander_type(e)        (cell_field(e,expd,t))
+#define expander_n(e)           (cell_field(e,expd,n))
+#define expander_name(e)        (cell_field(e,expd,name))
+#define expander_value(e)       (cell_field(e,expd,value))
+
 #define ctx_segments(c)         (cell_field(c,ctx,segments))
 #define ctx_global_env(c)       (cell_field(c,ctx,global_env))
 #define ctx_symbols(c)          (cell_field(c,ctx,symbols))
@@ -152,6 +176,7 @@ typedef Cell*(*EProc)(Cell*, Cell*);
 #define ctx_continue(c)         (cell_field(c,ctx,cont))
 #define ctx_lambda(c)           (cell_field(c,ctx,lambda))
 #define ctx_quote(c)            (cell_field(c,ctx,quote))
+#define ctx_syntax_expr(c)      (cell_field(c,ctx,synepr))
 
 enum _Type {
     FREE = 0,
@@ -171,6 +196,8 @@ enum _Type {
     CLOSURE,
     CONTEXT,
     MACRO,
+    MATCHER,
+    EXPANDER,
     CONTINUE,
     CONTINUES,
     ENVIR,
@@ -189,6 +216,7 @@ enum _Token {
     TOK_RBRACKET,
     TOK_RBRACE,
     TOK_DOT,
+    TOK_ELLIPSIS,
     TOK_QUOTE,
     TOK_DQUOTE,
     TOK_QQUOTE,
@@ -246,6 +274,21 @@ enum _Error {
     ValueError,
     ReferenceError,
     ArithmeticError,
+};
+
+enum _MatcherType {
+    MatcherLiteral,
+    MatcherConstant,
+    MatcherVariable,
+    MatcherUnderscore,
+    MatcherRest,
+    MatcherSequence,
+};
+
+enum _ExpanderType {
+    ExpanderConstant,
+    ExpanderVariable,
+    ExpanderSequence,
 };
 
 struct _String {
@@ -341,11 +384,32 @@ struct _Context {
 
     Cell *lambda;
     Cell *quote;
+    Cell *synepr;
+};
+
+struct _Matcher {
+    MatcherType t;
+    bool rept;
+    Cell *name;
+    Cell *value;
+};
+
+struct _Expander {
+    ExpanderType t;
+    uint n;
+    Cell *name;
+    Cell *value;
+};
+
+struct _Macro {
+    Cell *mchs;
+    Cell *env;
 };
 
 struct _Cell {
     uint t;
     union {
+        int         op;
         Char        chr;
         String      str;
         Number      num;
@@ -356,6 +420,9 @@ struct _Cell {
         Closure     clos;
         Context     ctx;
         Exception   excpt;
+        Matcher     mt;
+        Expander    expd;
+        Macro       macro;
     };
 };
 

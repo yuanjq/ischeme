@@ -34,6 +34,7 @@ typedef struct _Pair        Pair;
 typedef struct _Port        Port;
 typedef struct _Continue    Continue;
 typedef struct _Closure     Closure;
+typedef struct _ClosureExpr ClosureExpr;
 typedef struct _Exception   Exception;
 typedef struct _Cell        Cell;
 typedef struct _OpCode      OpCode;
@@ -97,6 +98,7 @@ typedef Cell*(*EProc)(Cell*, Cell*);
 #define continue_new(c)         cell_new(c, cont, CONTINUE)
 #define procedure_new(c)        cell_new(c, eproc, EPROC)
 #define closure_new(c)          cell_new(c, clos, CLOSURE)
+#define closure_expr_new(c)     cell_new(c, closexpr, CLOSURE_EXPR);
 #define context_new(c)          cell_new(c, ctx, CONTEXT)
 #define exception_new(c)        cell_new(c, excpt, EXCEPTION)
 #define matcher_new(c)          cell_new(c, mt, MATCHER)
@@ -144,6 +146,9 @@ typedef Cell*(*EProc)(Cell*, Cell*);
 #define closure_args(c)         (cell_field(c,clos,args))
 #define closure_code(c)         (cell_field(c,clos,code))
 #define closure_env(c)          (cell_field(c,clos,env))
+
+#define closure_expr_expr(c)    (cell_field(c,closexpr,expr))
+#define closure_expr_env(c)     (cell_field(c,closexpr,env))
 
 #define exception_type(e)       (cell_field(e,excpt,t))
 #define exception_msg(e)        (cell_field(e,excpt,msg))
@@ -198,6 +203,7 @@ enum _Type {
     MACRO,
     MATCHER,
     EXPANDER,
+    CLOSURE_EXPR,
     CONTINUE,
     CONTINUES,
     ENVIR,
@@ -347,6 +353,11 @@ struct _Closure {
     Cell *env;
 };
 
+struct _ClosureExpr {
+    Cell *expr;
+    Cell *env;
+};
+
 struct _Exception {
     Error t;
     Cell *msg;
@@ -423,6 +434,7 @@ struct _Cell {
         Matcher     mt;
         Expander    expd;
         Macro       macro;
+        ClosureExpr closexpr;
     };
 };
 

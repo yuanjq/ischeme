@@ -1,4 +1,3 @@
-
 _OPCODE(op_func0, NULL,                             0,          OP_REPL_READ,               0,  0,  0)
 _OPCODE(op_func0, NULL,                             0,          OP_REPL_EVAL,               0,  0,  0)
 _OPCODE(op_func0, NULL,                             0,          OP_REPL_PRINT,              0,  0,  0)
@@ -28,13 +27,13 @@ _OPCODE(op_func0, "case",                           SYNTAX,     OP_CASE,        
 _OPCODE(op_func0, "and",                            SYNTAX,     OP_AND,                     0,  0,  0)
 _OPCODE(op_func0, "or",                             SYNTAX,     OP_OR,                      0,  0,  0)
 _OPCODE(op_func0, "begin",                          SYNTAX,     OP_BEGIN,                   0,  0,  0)
-_OPCODE(op_func0, "define-syntax",                  SYNTAX,     OP_DEF_SYNTAX0,           0,  0,  0)
-_OPCODE(op_func0, NULL,                             0,          OP_DEF_SYNTAX1,                    0,  0,  0)
+_OPCODE(op_func0, "define-syntax",                  SYNTAX,     OP_DEF_SYNTAX0,             2,  2,  0)
+_OPCODE(op_func0, NULL,                             0,          OP_DEF_SYNTAX1,             0,  0,  0)
+_OPCODE(op_func0, NULL,                             0,          OP_DEF_SYNTAX2,             0,  0,  0)
 _OPCODE(op_func0, "let-syntax",                     SYNTAX,     OP_LET_SYNTAX,              0,  0,  0)
 _OPCODE(op_func0, "letrec-syntax",                  SYNTAX,     OP_LETREC_SYNTAX,           0,  0,  0)
 _OPCODE(op_func0, "syntax-rules",                   SYNTAX,     OP_SYNTAX_RULES,            0,  0xFFFF,  0)
-_OPCODE(op_func0, NULL,                             SYNTAX,     OP_SYNTAX_EXPR,            0,  0,  0)
-_OPCODE(op_func0, "quote",                          SYNTAX,     OP_QUOTE,                   0,  0,  0)
+_OPCODE(op_func0, "quote",                          SYNTAX,     OP_QUOTE,                   1,  1,  0)
 _OPCODE(op_func0, "unquote",                        SYNTAX,     OP_UNQUOTE,                 0,  0,  0)
 _OPCODE(op_func0, "quasiquote",                     SYNTAX,     OP_QUASIQUOTE,              0,  0,  0)
 _OPCODE(op_func0, "unquote-splicing",               SYNTAX,     OP_UNQUOTE_SPLICING,        0,  0,  0)
@@ -220,4 +219,3 @@ _OPCODE(op_func3, "magnitude",                      IPROC,      OP_MAGNITUDE,   
 _OPCODE(op_func3, "angle",                          IPROC,      OP_ANGLE,                   0,  0,  0)
 _OPCODE(op_func3, "number->string",                 IPROC,      OP_NUMBER_TO_STRING,        0,  0,  0)
 _OPCODE(op_func3, "integer->char",                  IPROC,      OP_STRING_TO_CHAR,          0,  0,  0)
-

@@ -82,6 +82,7 @@ void *cell_alloc(Cell *ctx, uint size) {
         res = cell_try_alloc(ctx, size);
         if (!res) {
             // TODO: out of memory 
+            while(1) printf("no memory.\n");
         }
     }
     return res;

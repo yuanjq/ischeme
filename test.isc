@@ -1,5 +1,16 @@
-(let* ((yin
-         ((lambda (cc) (display #\@) cc) (call-with-current-continuation (lambda (c) c))))
-       (yang
-         ((lambda (cc) (display #\*) cc) (call-with-current-continuation (lambda (c) c)))))
-    (yin yang))
+;; yin-yang pazzle test
+;(let* ((yin
+;         ((lambda (cc) (display #\@) cc) (call-with-current-continuation (lambda (c) c))))
+;       (yang
+;         ((lambda (cc) (display #\*) cc) (call-with-current-continuation (lambda (c) c)))))
+;    (yin yang))
+
+;; macro test
+;(define-syntax aaa (syntax-rules () ((_ a (b (c ...)) ...) '(b ...))))
+;(display (aaa 1 (2 (3 4)) (5 (6 7 8))))
+
+(define-syntax aaa (syntax-rules () ((_ ((a ...) (b ...)) ...) '((a b) ... ...))))
+(display (aaa ((1 2) (3 4)) ((5 6) (7 8))))
+
+;(define-syntax aaa (syntax-rules () ((_ (a ... (b ...)) ...) '((a b) ... ...))))
+;(display (aaa (2 3 (4 5)) (6 7 (8 9))))

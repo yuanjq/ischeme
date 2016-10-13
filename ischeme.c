@@ -7,6 +7,8 @@
 #include <unistd.h>
 #include "ischeme.h"
 
+//#define MACRO_DEBUG
+
 #define CELL_TRUE           &g_true
 #define CELL_FALSE          &g_false
 #define CELL_NIL            &g_nil
@@ -668,7 +670,7 @@ static void list_set(Cell *ls, Cell *n, Cell *v) {
 }
 
 static void list_add(Cell *ctx, Cell *ls, Cell *c) {
-    if (!is_pair(ls)) return;
+    if (!is_pair(ls) || is_nil(c)) return;
     if (car(ls) == CELL_NIL) {
         rplaca(ls, c);
     } else {
@@ -682,7 +684,7 @@ static void list_add(Cell *ctx, Cell *ls, Cell *c) {
 }
 
 static void list_extend(Cell *ctx, Cell *ls, Cell *c) {
-    if (!is_pair(ls)) return;
+    if (!is_pair(ls) || is_nil(c)) return;
     if (car(ls) == CELL_NIL) {
         if (is_pair(c)) {
             rplaca(ls, car(c));
@@ -914,6 +916,10 @@ static void write_cell(Cell *ctx, Cell *port, Cell *c, bool readable, bool more,
 	} else if (is_port(c)) {
 		snprintf(s, STR_BUF_SIZE, "#<PORT:%p>", c);
 	} else if (is_symbol(c)) {
+        if (equal(ctx_quote(ctx), c)) {
+            write_char(ctx, port, '\'');
+            return;
+        }
         write_string(ctx, port, symbol(c));
         return;
 	} else if (is_macro(c)) {
@@ -965,10 +971,9 @@ static void write_cell(Cell *ctx, Cell *port, Cell *c, bool readable, bool more,
     } else if (is_pair(c)) {
         bool quote = equal(ctx_quote(ctx), car(c));
         if (!quote) write_char(ctx, port, '(');
-        if (quote) write_char(ctx, port, '\'');
         for (; is_pair(c); c=cdr(c)) {
             write_cell(ctx, port, car(c), readable, more, top);
-            if (!is_nil(cdr(c))) write_char(ctx, port, ' ');
+            if (!quote && !is_nil(cdr(c))) write_char(ctx, port, ' ');
         }
         if (!quote) write_char(ctx, port, ')');
         return;
@@ -1007,7 +1012,6 @@ static void write_cell(Cell *ctx, Cell *port, Cell *c, bool readable, bool more,
             write_char(ctx, port, ' ');
             write_cell(ctx, port, exception_trg(c), readable, more, top);
         }
-        write_char(ctx, port, '\n');
         return;
     } else if (is_closure_var(c)) {
         write_cell(ctx, port, closure_var_var(c), readable, more, top);
@@ -1857,7 +1861,6 @@ static Cell *read_list(Cell *ctx, int c) {
 }
 
 /********************** macro **********************/
-
 static Cell *mk_literal_matcher(Cell *ctx, Cell *name, Cell *env) {
     Cell *c = matcher_new(ctx);
     if (c) {
@@ -1986,7 +1989,7 @@ static bool syntax_pattern_match_literal(Cell *ctx, Cell *mt, Cell *expr, Cell *
 }
 
 static Cell *syntax_pattern_match_sequence(Cell *ctx, Cell *mt, Cell *expr, Cell *expr_env, Cell *md) {
-    for (Cell *ls=matcher_value(mt); is_pair(ls) && is_pair(expr); ls=cdr(ls)) {
+    for (Cell *ls=matcher_value(mt); is_pair(ls); ls=cdr(ls)) {
         expr = syntax_pattern_match(ctx, car(ls), expr, expr_env, md);
         if (expr == CELL_ERR) break;
     }
@@ -2128,6 +2131,7 @@ static Cell *syntax_template_expand(Cell *ctx, Cell *expd, Cell *md, Cell *env, 
         return expander_value(expd);
     case ExpanderVariable: {
         Cell *var = assq(expander_name(expd), md);
+        if (is_nil(var)) return CELL_NIL;
         var = cadr(var);
         for (Cell *ls=idx; is_pair(ls) && !is_nil(car(ls)) && is_pair(var); ls=cdr(ls)) {
             var = list_ref(var, car(ls));
@@ -2244,7 +2248,7 @@ static Cell *syntax_matcher_analyze(Cell *ctx, Cell *lit, Cell *matches, Cell *s
         macher = cons(ctx, pattern, template);
         list_add(ctx, machers, macher);
     }
-    return mk_proc(ctx, cons(ctx, CELL_NIL, cons(ctx, cons(ctx, ctx_quote(ctx), cons(ctx, cons(ctx, machers, CELL_NIL), CELL_NIL)), CELL_NIL)), cons(ctx, CELL_NIL, cdr(syn_env)));
+    return mk_proc(ctx, cons(ctx, CELL_NIL, cons(ctx, cons(ctx, ctx_quote(ctx), cons(ctx, machers, CELL_NIL)), CELL_NIL)), cons(ctx, CELL_NIL, cdr(syn_env)));
 }
 
 static Cell *syntax_transform(Cell *ctx, Cell *machers, Cell *syn_env, Cell *expr, Cell *expr_env) {
@@ -2257,12 +2261,16 @@ static Cell *syntax_transform(Cell *ctx, Cell *machers, Cell *syn_env, Cell *exp
             break;
     }
     if (is_pair(ls) && is_pair(car(ls))) template = cdar(ls);
-    if (!template) return mk_exception(ctx, SyntaxError, mk_string(ctx, "unmached pattern"), NULL, NULL);
+    if (!template) return mk_exception(ctx, SyntaxError, mk_string(ctx, "unmatched pattern"), NULL, NULL);
+    #ifdef MACRO_DEBUG
+    write_string(ctx, ctx_outport(ctx), "\n*Macro match dict*\n");
+    print_cell(ctx, ctx_outport(ctx), md);
+    write_char(ctx, ctx_outport(ctx), '\n');
+    #endif
     ls = syntax_template_expand(ctx, template, md, expr_env, cons(ctx, CELL_NIL, CELL_NIL));
     if (expander_type(template) == ExpanderSequence) ls = car(ls);
     return ls;
 }
-
 /******************** macro end *********************/
 
 static Cell *op_func0(Cell *ctx, int op) {
@@ -2364,10 +2372,10 @@ static Cell *op_func0(Cell *ctx, int op) {
         ctx_args(ctx) = CELL_NIL;
         gotoOp(ctx, OP_APPLY);
     case OP_DEF_SYNTAX2:
-        if (!is_pair(ctx_ret(ctx)) || !is_pair(car(ctx_ret(ctx))) || !is_pair(cdar(ctx_ret(ctx)))) {
+        if (!is_pair(ctx_ret(ctx)) || !is_pair(car(ctx_ret(ctx))) || !is_pair(cdr(ctx_ret(ctx)))) {
             gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "invalid syntax defined"), NULL, NULL));
         }
-        set_env(ctx, ctx_env(ctx), ctx_code(ctx), mk_macro(ctx, cdar(ctx_ret(ctx)), caar(ctx_ret(ctx))));
+        set_env(ctx, ctx_env(ctx), ctx_code(ctx), mk_macro(ctx, cdr(ctx_ret(ctx)), car(ctx_ret(ctx))));
         popOp(ctx, CELL_UNDEF);
     case OP_SYNTAX_RULES:
         if (!is_pair(ctx_code(ctx)) || !is_pair(cdr(ctx_code(ctx)))) {
@@ -2419,9 +2427,14 @@ static Cell *op_func0(Cell *ctx, int op) {
                         ctx_code(ctx) = cdr(ctx_code(ctx));
                         gotoOp(ctx, syntax_op(c));
                     } else if (is_macro(c)) {
-                        c = syntax_transform(ctx, macro_matchers(c), macro_env(c), cdr(ctx_code(ctx)), ctx_env(ctx));
-                        ctx_code(ctx) = c;
+                        ctx_code(ctx) = syntax_transform(ctx, macro_matchers(c), macro_env(c), cdr(ctx_code(ctx)), ctx_env(ctx));
+                        #ifdef MACRO_DEBUG
+                        write_string(ctx, ctx_outport(ctx), "\n*Macro transform code*\n");
+                        print_cell(ctx, ctx_outport(ctx), ctx_code(ctx));
+                        write_char(ctx, ctx_outport(ctx), '\n');
+                        #endif
                         ctx_args(ctx) = CELL_NIL;
+                        ctx_env(ctx) = macro_env(c);
                         gotoOp(ctx, OP_EVAL);
                     }
                 }

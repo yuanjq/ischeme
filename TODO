@@ -1,1 +1,47 @@
 iScheme TODO LIST
+
+* Runtime
+** DONE core syntax
+   [do letrec cond case and or let-syntax letrec-syntax unquote quasiquote unquote-splicing delay]
+   - State "TODO"
+   [define lambda let let* set! if begin define-syntax syntax-rules quote]
+   - State "DONE"           [2016/10/13 update]
+** DONE core procedure
+   [map for-each eval apply force call-with-current-continuation values 
+   call-with-values dynamic-wind scheme-report-environment null-environment
+   interaction-environment load transcript-on transcript-off display newline
+   read write read-char write-char peek-char char-ready? eof-object? 
+   open-input-file open-output-file close-input-port close-output-port port?
+   input-port? output-port? current-input-port current-output-port 
+   call-with-input-file call-with-output-file with-input-from-file 
+   with-output-to-file not null? boolean? symbol? pair? procedure? eq? eqv?
+   equal? char? char=? char<? char<=? char>? char>=? char-ci=? char-ci<? 
+   char-ci<=? char-ci>? char-ci>=? char-alphabetic? char-numeric? 
+   char-whitespace? char-upper-case? char-lower-case? string? string=? 
+   string<? string<=? string>? string>=? string-ci=? string-ci<? 
+   string-ci<=? string-ci>? string-ci>=? vector? vector make-vector 
+   vector-length vector-ref vector-set! vector-fill! vector->list list? 
+   list list->string list->vector symbol->string string make-string 
+   string-length string-ref string-set! substring string-append string-copy
+   string-fill! string->symbol string->list string->number char->integer 
+   char-upcase char-downcase cons car cdr set-car! set-cdr! length append 
+   reverse list-tail list-ref memq memv member assq assv assoc number? 
+   integer? rational? real? complex? exact? inexact? zero? negative? 
+   positive? odd? even? < <= > >= = + - * / abs quotient remainder modulo 
+   gcd lcm expt sqrt numerator denominator rationalize floor ceiling 
+   truncate round inexact->exact exact->inexact max min sin cos tan asin 
+   acos atan exp log make-rectangular make-polar real-part imag-part 
+   magnitude angle number->string integer->char]
+   - State "TODO"
+** DONE call/cc
+   - State "DONE"       [2016/1/18]
+
+* Macro
+** DONE syntax-rules (except vector mode)
+   - State "DONE"       [2016/10/13 16:21]
+** DONE define-syntax
+   - State "DONE"       [2016/10/13 16:21]
+
+* GC
+* FFI
+* Modules

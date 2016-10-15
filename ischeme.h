@@ -27,13 +27,16 @@ typedef unsigned int        uint;
 typedef unsigned int        size_t;
 
 typedef unsigned char       Char;
+typedef unsigned char       Boolean;
 typedef struct _String      String;
 typedef struct _String      Symbol;
 typedef struct _Number      Number;
 typedef struct _Pair        Pair;
+typedef struct _Vector      Vector;
 typedef struct _Port        Port;
 typedef struct _Continue    Continue;
 typedef struct _Closure     Closure;
+typedef struct _Proc        Proc;
 typedef struct _ClosureVar  ClosureVar;
 typedef struct _Exception   Exception;
 typedef struct _Cell        Cell;
@@ -99,6 +102,7 @@ typedef Cell*(*EProc)(Cell*, Cell*);
 #define procedure_new(c)        cell_new(c, eproc, EPROC)
 #define closure_new(c)          cell_new(c, clos, CLOSURE)
 #define closure_var_new(c)      cell_new(c, closvar, CLOSURE_VAR);
+#define proc_new(c)             cell_new(c, proc, PROC)
 #define context_new(c)          cell_new(c, ctx, CONTEXT)
 #define exception_new(c)        cell_new(c, excpt, EXCEPTION)
 #define matcher_new(c)          cell_new(c, mt, MATCHER)
@@ -118,6 +122,9 @@ typedef Cell*(*EProc)(Cell*, Cell*);
 
 #define pair_car(c)             (cell_field(c,pair,a))
 #define pair_cdr(c)             (cell_field(c,pair,d))
+
+#define vector_length(c)        (cell_field(c,vector,length))
+#define vector_data(c)          (cell_field(c,vector,data))
 
 #define number_type(n)          (cell_field(n,num,t))
 #define number_long(n)          (cell_field(n,num,l))
@@ -149,6 +156,9 @@ typedef Cell*(*EProc)(Cell*, Cell*);
 
 #define closure_var_var(c)      (cell_field(c,closvar,var))
 #define closure_var_env(c)      (cell_field(c,closvar,env))
+
+#define proc_name(c)            (cell_field(c,proc,name))
+#define proc_closure(c)         (cell_field(c,proc,clos))
 
 #define exception_type(e)       (cell_field(e,excpt,t))
 #define exception_msg(e)        (cell_field(e,excpt,msg))
@@ -346,6 +356,11 @@ struct _Pair {
     Cell *d;
 };
 
+struct _Vector {
+    uint length;
+    Cell *data[];
+};
+
 struct _Closure {
     Cell *name;
     Cell *args;
@@ -356,6 +371,11 @@ struct _Closure {
 struct _ClosureVar {
     Cell *var;
     Cell *env;
+};
+
+struct _Proc {
+    Cell *name;
+    Cell *clos;
 };
 
 struct _Exception {
@@ -422,13 +442,16 @@ struct _Cell {
     union {
         int         op;
         Char        chr;
+        Boolean     bl;
         String      str;
         Number      num;
         Pair        pair;
+        Vector      vector;
         Port        port;
         Continue    cont;
         EProc       eproc;
         Closure     clos;
+        Proc        proc;
         Context     ctx;
         Exception   excpt;
         Matcher     mt;

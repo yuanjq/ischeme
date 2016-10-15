@@ -35,6 +35,8 @@ iScheme TODO LIST
    - State "TODO"
 ** DONE call/cc
    - State "DONE"       [2016/1/18]
+** DONE vector support
+   - State "DONE"       [2016/10/15 21:34]
 
 * Macro
 ** DONE syntax-rules (except vector mode)

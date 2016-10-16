@@ -2882,17 +2882,53 @@ static Cell *op_func2(Cell *ctx, int op) {
         popOp(ctx, c);
     }
     case OP_MEMQ:
-        break;
     case OP_MEMV:
-        break;
     case OP_MEMBER:
-        break;
     case OP_ASSQ:
-        break;
     case OP_ASSV:
+    case OP_ASSOC: {
+        bool (*func)(Cell*,Cell*);
+        switch (op) {
+        case OP_MEMQ:
+        case OP_ASSQ:
+            func = eq;
+            break;
+        case OP_MEMV:
+        case OP_ASSV:
+            func = eqv;
+            break;
+        case OP_MEMBER:
+        case OP_ASSOC:
+            func = equal;
+            break;
+        }
+        c = car(ctx_args(ctx));
+        d = cadr(ctx_args(ctx));
+
+        switch (op) {
+        case OP_MEMQ:
+        case OP_MEMV:
+        case OP_MEMBER:
+            for (; is_pair(d); d=cdr(d)) {
+                if (func(c, car(d)))
+                    break;
+            }
+            popOp(ctx, is_nil(d) ? CELL_FALSE : d);
+        case OP_ASSQ:
+        case OP_ASSV:
+        case OP_ASSOC:
+            for (; is_pair(d); d=cdr(d)) {
+                if (!is_pair(car(d))) {
+                    gotoErr(ctx, mk_exception(ctx, ValueError, mk_string(ctx, "non-pair in alist"), cadr(ctx_args(ctx)), NULL));
+                }
+                if (func(c, caar(d))) {
+                    popOp(ctx, car(d));
+                }
+            }
+            popOp(ctx, CELL_FALSE);
+        }
         break;
-    case OP_ASSOC:
-        break;
+    }
     case OP_VECTOR: {
         uint len = length(ctx_args(ctx)), i = 0;
         c = mk_vector(ctx, len, CELL_UNDEF);

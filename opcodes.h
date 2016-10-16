@@ -84,9 +84,9 @@ _OPCODE(op_func2, "boolean?",                       IPROC,      OP_BOOLEAN_P,   
 _OPCODE(op_func2, "symbol?",                        IPROC,      OP_SYMBOL_P,                1,  1,  0)
 _OPCODE(op_func2, "pair?",                          IPROC,      OP_PAIR_P,                  1,  1,  0)
 _OPCODE(op_func2, "procedure?",                     IPROC,      OP_PROCEDURE_P,             1,  1,  0)
-_OPCODE(op_func2, "eq?",                            IPROC,      OP_EQ_P,                    0,  0,  0)
-_OPCODE(op_func2, "eqv?",                           IPROC,      OP_EQV_P,                   0,  0,  0)
-_OPCODE(op_func2, "equal?",                         IPROC,      OP_EQUAL_P,                 0,  0,  0)
+_OPCODE(op_func2, "eq?",                            IPROC,      OP_EQ_P,                    2,  2,  0)
+_OPCODE(op_func2, "eqv?",                           IPROC,      OP_EQV_P,                   2,  2,  0)
+_OPCODE(op_func2, "equal?",                         IPROC,      OP_EQUAL_P,                 2,  2,  0)
 
 _OPCODE(op_func2, "char?",                          IPROC,      OP_CHAR_P,                  1,  1,  0)
 _OPCODE(op_func2, "char=?",                         IPROC,      OP_CHAR_EP,                 0,  0,  0)

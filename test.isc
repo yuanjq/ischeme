@@ -1,10 +1,11 @@
-;; yin-yang pazzle test
-;(let* ((yin
-;         ((lambda (cc) (display #\@) cc) (call-with-current-continuation (lambda (c) c))))
-;       (yang
-;         ((lambda (cc) (display #\*) cc) (call-with-current-continuation (lambda (c) c)))))
-;    (yin yang))
-
+(define-syntax test
+  (syntax-rules ()
+    ((test expect expr)
+     (begin (display 'expr) (display #\space)
+        (if (equal? expect expr)
+        (display "pass!\n")
+        (display "fail!\n"))))))
+    
 ;; macro test
 (define-syntax aaa (syntax-rules ()
     ((_ ((a ...) (b ...)) ...) '(a ... ... b ... ...))
@@ -25,11 +26,9 @@
     ((when test stmt1 stmt2 ...)
      (if test
         (begin stmt1 stmt2 ...)))))
-(when #t (display (+ 1 2)) (display #\newline))
-(when #t 1 2)
-(let ((if #t))
-    (when if (set! if 'now))
-    if)
+;(when #t (display (+ 1 2)) (display #\newline))
+(test 'now (let ((if #t))
+  (when if (set! if 'now)) if))
 
 ;; list test
 (define l1 (list 1 2))
@@ -40,3 +39,83 @@
 (set-car! l1 2)
 (display l1) (newline)
 (display l2) (newline)
+
+(test #t (eqv? 'a 'a))
+(test #f (eqv? 'a 'b))
+(test #t (eqv? 2 2))
+(test #t (eqv? '() '()))
+(test #t (eqv? 100000000 100000000))
+(test #f (eqv? (cons 1 2) (cons 1 2)))
+(test #f (eqv? (lambda () 1) (lambda () 2)))
+(test #f (eqv? #f 'nil))
+(test #t (let ((p (lambda (x) x)))
+    (eqv? p p)))
+(test #f (eqv? "" "")) ;undef
+(test #f (eqv? '#() '#())) ;undef
+(test #f (eqv? (lambda (x) x) ;undef
+               (lambda (x) x)))
+(test #f (eqv? (lambda (x) x) ;undef
+               (lambda (y) y)))
+(define gen-counter
+  (lambda ()
+    (let ((n 0))
+      (lambda () (set! n (+ n 1)) n))))
+(define gen-counter-proc (gen-counter))
+(test 1 (gen-counter-proc))
+(test 2 (gen-counter-proc))
+(test 3 (gen-counter-proc))
+(test #t (let ((g (gen-counter)))
+            (eqv? g g)))
+(test #f (eqv? (gen-counter) (gen-counter)))
+
+(define gen-loser
+  (lambda ()
+    (let ((n 0))
+      (lambda () (set! n (+ n 1)) 27))))
+(test #t (let ((g (gen-loser)))
+            (eqv? g g)))
+(test #f (eqv? (gen-loser) (gen-loser))) ;undef
+
+;(test #t (letrec ((f (lambda () (if (eqv? f g) 'both 'f))) ;undef
+;                  (g (lambda () (if (evq? f g) 'both 'g))))
+;                 (eqv? f g)))
+;(test #f (letrec ((f (lambda () (if (eqv? f g) 'f 'both)))
+;                  (g (lambda () (if (eqv? f g) 'g 'both))))
+;                 (eqv? f g)))
+(test #f (eqv? '(a) '(a))) ;undef
+(test #f (eqv? "a" "a")) ;undef
+(test #f (eqv? '(b) (cdr '(a b)))) ;undef
+(test #t (let ((x '(a))) (eqv? x x)))
+
+(test #t (eq? 'a 'a))
+(test #f (eq? '(a) '(a))) ;undef
+(test #f (eq? (list 'a) (list 'a)))
+(test #f (eq? "a" "a")) ;undef
+(test #f (eq? "" "")) ;undef
+(test #t (eq? '() '()))
+(test #f (eq? 2 2)) ;undef
+(test #f (eq? #\A #\A)) ;undef
+(test #t (eq? car car))
+(test #t (let ((n (+ 2 3))) ;undef
+            (eq? n n)))
+(test #t (let ((x '(a)))
+            (eq? x x)))
+(test #t (let ((x '#()))
+            (eq? x x)))
+(test #t (let ((p (lambda (x) x)))
+            (eq? p p )))
+
+(test #t (equal? 'a 'a))
+(test #t (equal? '(a) '(a)))
+(test #t (equal? '(a (b) c) '(a (b) c)))
+(test #t (equal? "abc" "abc"))
+(test #t (equal? 2 2))
+(test #t (equal? (make-vector 5 'a) (make-vector 5 'a)))
+(test #f (equal? (lambda (x) x) (lambda (y) y))) ;undef
+
+;; yin-yang pazzle test
+(let* ((yin
+         ((lambda (cc) (display #\@) cc) (call-with-current-continuation (lambda (c) c))))
+       (yang
+         ((lambda (cc) (display #\*) cc) (call-with-current-continuation (lambda (c) c)))))
+    (yin yang))

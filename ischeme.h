@@ -66,7 +66,7 @@ typedef Cell*(*EProc)(Cell*, Cell*);
 #define TRUE                    1
 #define FALSE                   0
 #define MAX_SEGS_COUNT          128
-#define SEG_INIT_MEM_SIZE       (1024*1024)
+#define SEG_INIT_MEM_SIZE       (10*1024*1024)
 #define MAX_LOAD_FILES          256
 #define STR_BUF_SIZE            128
 

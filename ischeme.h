@@ -24,7 +24,6 @@
 typedef unsigned char       bool;
 typedef unsigned char       uchar;
 typedef unsigned int        uint;
-typedef unsigned int        size_t;
 
 typedef unsigned char       Char;
 typedef unsigned char       Boolean;

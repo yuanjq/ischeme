@@ -58,7 +58,6 @@ typedef enum _Error         Error;
 typedef enum _MatcherType   MatcherType;
 typedef enum _ExpanderType  ExpanderType;
 
-//typedef Cell* (*OpFunc)(Cell*, int);
 typedef Cell*(*Reader)(Cell*, int);
 typedef Cell*(*EProc)(Cell*, Cell*);
 
@@ -467,7 +466,6 @@ struct _Cell {
 };
 
 struct _OpCode {
-    //OpFunc func;
     char *name;
     unsigned char t;
     int min_args;

@@ -24,7 +24,6 @@
 typedef unsigned char       bool;
 typedef unsigned char       uchar;
 typedef unsigned int        uint;
-typedef unsigned int        size_t;
 
 typedef unsigned char       Char;
 typedef unsigned char       Boolean;
@@ -59,7 +58,7 @@ typedef enum _Error         Error;
 typedef enum _MatcherType   MatcherType;
 typedef enum _ExpanderType  ExpanderType;
 
-typedef Cell* (*OpFunc)(Cell*, int);
+//typedef Cell* (*OpFunc)(Cell*, int);
 typedef Cell*(*Reader)(Cell*, int);
 typedef Cell*(*EProc)(Cell*, Cell*);
 
@@ -191,6 +190,9 @@ typedef Cell*(*EProc)(Cell*, Cell*);
 #define ctx_continue(c)         (cell_field(c,ctx,cont))
 #define ctx_lambda(c)           (cell_field(c,ctx,lambda))
 #define ctx_quote(c)            (cell_field(c,ctx,quote))
+#define ctx_quasiquote(c)       (cell_field(c,ctx,qquote))
+#define ctx_unquote(c)          (cell_field(c,ctx,uquote))
+#define ctx_unquote_splicing(c) (cell_field(c,ctx,uquotes))
 #define ctx_syntax_expr(c)      (cell_field(c,ctx,synepr))
 
 enum _Type {
@@ -275,7 +277,7 @@ enum _Radix {
 };
 
 enum _Op {
-    #define _OPCODE(f, n, t1, o, m1, m2, t2) o,
+    #define _OPCODE(n, t1, o, m1, m2, t2) o,
     #include "opcodes.h"
     #undef _OPCODE
     OPCODE_MAX
@@ -415,6 +417,9 @@ struct _Context {
 
     Cell *lambda;
     Cell *quote;
+    Cell *qquote;
+    Cell *uquote;
+    Cell *uquotes;
     Cell *synepr;
 };
 
@@ -462,7 +467,7 @@ struct _Cell {
 };
 
 struct _OpCode {
-    OpFunc func;
+    //OpFunc func;
     char *name;
     unsigned char t;
     int min_args;

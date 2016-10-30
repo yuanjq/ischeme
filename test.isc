@@ -138,3 +138,13 @@
 (test '((a)) (assoc (list 'a) '(((a)) ((b)) ((c)))))
 (test #f (assq 5 '((2 3) (5 7) (11 13))))
 (test '(5 7) (assv 5 '((2 3) (5 7) (11 13))))
+
+;; cond
+(test 'greater (cond ((> 3 2) 'greater)
+                     ((< 3 2) 'less)))
+(test 'equal (cond ((> 3 3) 'greater)
+                   ((< 3 3) 'less)
+                   (else 'equal)))
+(define cadr (lambda (a) (car (cdr a))))
+(test 2 (cond ((assv 'b '((a 1) (b 2))) => cadr)
+              (else #f)))

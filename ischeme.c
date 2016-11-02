@@ -2320,9 +2320,9 @@ static Cell *syntax_template_expand(Cell *ctx, Cell *expd, Cell *md, Cell *env, 
     return CELL_ERR;
 }
 
-static bool is_contains(Cell *ls, Cell *sym) {
+static bool is_contains(Cell *ls, Cell *c) {
     for (; is_pair(ls); ls=cdr(ls)) {
-        if (is_symbol(car(ls)) && equal(car(ls), sym))
+        if (equal(car(ls), c))
             return TRUE;
     }
     return FALSE;
@@ -2606,7 +2606,11 @@ static Cell *eval_cond(Cell *ctx, Cell *code) {
             if (is_pair(cdr(ls)))
                 return mk_exception(ctx, SyntaxError, mk_string(ctx, "cond: clause lack of test expression"), NULL, NULL);
         }
-        if (is_symbol(car(c)) && !strcmp(symbol(car(c)), "else")) {
+        d = car(c);
+        if (is_closure_var(d)) {
+            d = closure_var_var(d);
+        }
+        if (is_symbol(d) && !strcmp(symbol(d), "else")) {
             if (is_pair(cdr(ls)))
                 return mk_exception(ctx, SyntaxError, mk_string(ctx, "cond: 'else' clause must be last"), NULL, NULL);
             if (!is_pair(cdr(c)))
@@ -2640,6 +2644,48 @@ static Cell *eval_cond(Cell *ctx, Cell *code) {
         }
         return d;
     }
+}
+
+static Cell *eval_case(Cell *ctx, Cell *code) {
+    Cell *c, *d, *e;
+    c = car(code);
+    for (Cell *ls=cdr(code); is_pair(ls); ls=cdr(ls)) {
+        d = car(ls);
+        if (!is_pair(d)) {
+            return mk_exception(ctx, SyntaxError, mk_string(ctx, "case: illegal format clause"), NULL, NULL);
+        }
+        e = car(d);
+        if (is_closure_var(e)) {
+            e = closure_var_var(e);
+        }
+        if (is_symbol(e) && !strcmp(symbol(e), "else")) {
+            if (is_pair(cdr(ls))) {
+                return mk_exception(ctx, SyntaxError, mk_string(ctx, "case: 'else' clause must be last"), NULL, NULL);
+            }
+            continue;
+        }
+        if (!is_list(e)) {
+            return mk_exception(ctx, SyntaxError, mk_string(ctx, "case: datum not a sequence"), NULL, NULL);
+        }
+        if (!is_pair(cdr(d))) {
+            return mk_exception(ctx, SyntaxError, mk_string(ctx, "case: missing expression after datum sequence"), NULL, NULL);
+        }
+    }
+
+    c = apply(ctx, OP_EVAL, CELL_NIL, c, ctx_env(ctx));
+    if (is_exception(c)) return c;
+    for (Cell *ls=code; is_pair(ls); ls=cdr(ls)) {
+        d = car(ls);
+        e = car(d);
+        if (is_closure_var(e)) {
+            e = closure_var_var(e);
+        }
+        if ((is_symbol(e) && !strcmp(symbol(e), "else")) ||
+             is_contains(e, c)) {
+            return apply(ctx, OP_EVAL_LIST, CELL_NIL, cdr(d), ctx_env(ctx));
+        }
+    }
+    return CELL_UNDEF;
 }
 
 static Cell *apply(Cell *ctx, int op, Cell *args, Cell *code, Cell *env) {
@@ -2898,8 +2944,9 @@ Loop:
             gotoErr(ctx, c);
         popOp(ctx, c);
     case OP_CASE:
-        //TODO
-        break;
+        if (is_exception(c = eval_case(ctx, ctx_code(ctx))))
+            gotoErr(ctx, c);
+        popOp(ctx, c);
     case OP_BEGIN:
         ctx_env(ctx) = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
         ctx_args(ctx) = CELL_NIL;

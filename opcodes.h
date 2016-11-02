@@ -23,7 +23,7 @@ _OPCODE("set!",                           SYNTAX,     OP_SET,                   
 _OPCODE("if",                             SYNTAX,     OP_IF0,                     2,  3,  0)
 _OPCODE(NULL,                             0,          OP_IF1,                     0,  0,  0)
 _OPCODE("cond",                           SYNTAX,     OP_COND,                    0,  0xFFFF,  0)
-_OPCODE("case",                           SYNTAX,     OP_CASE,                    0,  0,  0)
+_OPCODE("case",                           SYNTAX,     OP_CASE,                    1,  0xFFFF,  0)
 _OPCODE("and",                            SYNTAX,     OP_AND,                     0,  0xFFFF,  0)
 _OPCODE("or",                             SYNTAX,     OP_OR,                      0,  0xFFFF,  0)
 _OPCODE("begin",                          SYNTAX,     OP_BEGIN,                   0,  0xFFFF,  0)

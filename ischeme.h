@@ -144,6 +144,7 @@ typedef Cell*(*EProc)(Cell*, Cell*);
 #define continue_args(c)        (cell_field(c,cont,args))
 #define continue_env(c)         (cell_field(c,cont,env))
 #define continue_code(c)        (cell_field(c,cont,code))
+#define continue_data(c)        (cell_field(c,cont,data))
 #define continues_car(c)        (c->pair.a)
 #define continues_cdr(c)        (c->pair.d)
 
@@ -186,6 +187,7 @@ typedef Cell*(*EProc)(Cell*, Cell*);
 #define ctx_args(c)             (cell_field(c,ctx,args))
 #define ctx_env(c)              (cell_field(c,ctx,env))
 #define ctx_code(c)             (cell_field(c,ctx,code))
+#define ctx_data(c)             (cell_field(c,ctx,data))
 #define ctx_continue(c)         (cell_field(c,ctx,cont))
 #define ctx_lambda(c)           (cell_field(c,ctx,lambda))
 #define ctx_quote(c)            (cell_field(c,ctx,quote))
@@ -350,6 +352,7 @@ struct _Continue {
     Cell *args;
     Cell *env;
     Cell *code;
+    Cell *data;
 };
 
 struct _Pair {
@@ -366,6 +369,7 @@ struct _Closure {
     Cell *name;
     Cell *args;
     Cell *code;
+    Cell *data;
     Cell *env;
 };
 
@@ -412,6 +416,7 @@ struct _Context {
     Cell *args;
     Cell *env;
     Cell *code;
+    Cell *data;
     Cell *cont;
 
     Cell *lambda;
@@ -473,6 +478,26 @@ struct _OpCode {
     unsigned char *arg_types;
 };
 
+#define T_ANY       "\001"
+#define T_CHAR      "\002"
+#define T_NUMBER    "\003"
+#define T_REAL      "\004"
+#define T_INTEGER   "\005"
+#define T_NATURAL   "\006"
+#define T_STRING    "\007"
+#define T_SYMBOL    "\010"
+#define T_PAIR      "\011"
+#define T_LIST      "\012"
+#define T_VECTOR    "\013"
+#define T_PROC      "\014"
+#define T_ENVIR     "\015"
+#define T_CONTI     "\016"
+#define T_PORT      "\017"
+#define T_INPORT    "\020"
+#define T_OUTPORT   "\021"
+
+
+/************** function *************/
 void *cell_alloc(Cell *ctx, uint size);
 uint cell_gc(Cell *, uint*);
 Segment *cell_mk_segment(int, int);

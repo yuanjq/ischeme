@@ -2,13 +2,13 @@ iScheme TODO LIST
 
 * Runtime
 ** DONE core syntax
-   [cond case delay]
+   [delay]
    - State "TODO"
    
    [define lambda let let* set! if begin define-syntax syntax-rules quote
    unquote quasiquote unquote-splicing let-syntax letrec-syntax do letrec
-   and or]
-   - State "DONE"           [2016/10/24 update]
+   and or cond case]
+   - State "DONE"           [2016/11/14 update]
 
 ** DONE core procedure
    [map for-each eval apply force call-with-current-continuation values 

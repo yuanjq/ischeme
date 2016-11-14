@@ -1,10 +1,3 @@
-;; yin-yang pazzle test
-;(let* ((yin
-;         ((lambda (cc) (display #\@) cc) (call-with-current-continuation (lambda (c) c))))
-;       (yang
-;         ((lambda (cc) (display #\*) cc) (call-with-current-continuation (lambda (c) c)))))
-;    (yin yang))
-
 (define-syntax test
   (syntax-rules ()
     ((test expect expr)
@@ -82,12 +75,12 @@
 (test #t (let ((g (gen-loser)))
             (eqv? g g)))
 (test #f (eqv? (gen-loser) (gen-loser))) ;undef
-;(test #t (letrec ((f (lambda () (if (eqv? f g) 'both 'f))) ;undef
-;                  (g (lambda () (if (evq? f g) 'both 'g))))
-;                 (eqv? f g)))
-;(test #f (letrec ((f (lambda () (if (eqv? f g) 'f 'both)))
-;                  (g (lambda () (if (eqv? f g) 'g 'both))))
-;                 (eqv? f g)))
+(test #f (letrec ((f (lambda () (if (eqv? f g) 'both 'f))) ;undef
+                  (g (lambda () (if (eqv? f g) 'both 'g))))
+                 (eqv? f g)))
+(test #f (letrec ((f (lambda () (if (eqv? f g) 'f 'both)))
+                  (g (lambda () (if (eqv? f g) 'g 'both))))
+                 (eqv? f g)))
 (test #f (eqv? '(a) '(a))) ;undef
 (test #f (eqv? "a" "a")) ;undef
 (test #f (eqv? '(b) (cdr '(a b)))) ;undef
@@ -140,10 +133,14 @@
 (test '(5 7) (assv 5 '((2 3) (5 7) (11 13))))
 
 ;; quaisquote unquote unquote-splicing
-;(display `(1 ,(+ 1 2) 4))
 (test '(1 3 4) `(1 ,(+ 1 2) 4))
 (test '(1 2 3 4) `(1 ,@(list 2 3) 4))
 (test '(1 `(2 ,(3 4))) `(1 `(2 ,(3 ,(+ 1 3)))))
+
+;; letrec
+(test 3 (letrec ((aaa (lambda () (+ 1 (bbb 1))))
+                 (bbb (lambda (n) (+ n 1))))
+            (aaa)))
 
 ;; let-syntax letrec-syntax
 (test 1 (let-syntax ((m (syntax-rules () ((m) 1))))
@@ -156,14 +153,14 @@
                 (let-syntax ((m (syntax-rules () ((m) x))))
                     (let ((x 'inner))
                         (m)))))
-;(test 7 (letrec-syntax ((my-or (syntax-rules ()
-;                                ((my-or) #f)
-;                                ((my-or e) e)
-;                                ((my-or e1 e2 ...)
-;                                    (let ((temp e1))
-;                                        (if temp temp (my-or e2 ...)))))))
-;            (let ((x #f) (y 7) (temp 8) (let odd?) (if even?))
-;                (my-or x (let temp) (if y) y))))
+(test 7 (letrec-syntax ((my-or (syntax-rules ()
+                                ((my-or) #f)
+                                ((my-or e) e)
+                                ((my-or e1 e2 ...)
+                                    (let ((temp e1))
+                                        (if temp temp (my-or e2 ...)))))))
+            (let ((x #f) (y 7) (temp 8) (let odd?) (if even?))
+                (my-or x (let temp) (if y) y))))
 
 ;; cond
 (test 'greater (cond ((> 3 2) 'greater)
@@ -186,3 +183,13 @@
                     ((a e i o u) 'vowel)
                     ((w y) 'semivowel)
                     (else 'consonant)))
+
+;; do
+(test #(0 1 2 3 4) (do ((vec (make-vector 5))
+                        (i 0 (+ i 1)))
+                    ((= i 5) vec)
+                    (vector-set! vec i i)))
+(test 25 (let ((x '(1 3 5 7 9)))
+            (do ((x x (cdr x))
+                 (sum 0 (+ sum (car x))))
+                ((null? x) sum))))

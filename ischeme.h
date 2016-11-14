@@ -36,7 +36,7 @@ typedef struct _Port        Port;
 typedef struct _Continue    Continue;
 typedef struct _Closure     Closure;
 typedef struct _Proc        Proc;
-typedef struct _ClosureVar  ClosureVar;
+typedef struct _ClosureExpr ClosureExpr;
 typedef struct _Exception   Exception;
 typedef struct _Cell        Cell;
 typedef struct _OpCode      OpCode;
@@ -99,7 +99,7 @@ typedef Cell*(*EProc)(Cell*, Cell*);
 #define continue_new(c)         cell_new(c, cont, CONTINUE)
 #define procedure_new(c)        cell_new(c, eproc, EPROC)
 #define closure_new(c)          cell_new(c, clos, CLOSURE)
-#define closure_var_new(c)      cell_new(c, closvar, CLOSURE_VAR);
+#define closure_expr_new(c)     cell_new(c, closexpr, CLOSURE_EXPR);
 #define proc_new(c)             cell_new(c, proc, PROC)
 #define context_new(c)          cell_new(c, ctx, CONTEXT)
 #define exception_new(c)        cell_new(c, excpt, EXCEPTION)
@@ -153,8 +153,8 @@ typedef Cell*(*EProc)(Cell*, Cell*);
 #define closure_code(c)         (cell_field(c,clos,code))
 #define closure_env(c)          (cell_field(c,clos,env))
 
-#define closure_var_var(c)      (cell_field(c,closvar,var))
-#define closure_var_env(c)      (cell_field(c,closvar,env))
+#define closure_expr_expr(c)    (cell_field(c,closexpr,expr))
+#define closure_expr_env(c)     (cell_field(c,closexpr,env))
 
 #define proc_name(c)            (cell_field(c,proc,name))
 #define proc_closure(c)         (cell_field(c,proc,clos))
@@ -216,7 +216,7 @@ enum _Type {
     MACRO,
     MATCHER,
     EXPANDER,
-    CLOSURE_VAR,
+    CLOSURE_EXPR,
     CONTINUE,
     CONTINUES,
     ENVIR,
@@ -373,8 +373,8 @@ struct _Closure {
     Cell *env;
 };
 
-struct _ClosureVar {
-    Cell *var;
+struct _ClosureExpr {
+    Cell *expr;
     Cell *env;
 };
 
@@ -466,7 +466,7 @@ struct _Cell {
         Matcher     mt;
         Expander    expd;
         Macro       macro;
-        ClosureVar  closvar;
+        ClosureExpr  closexpr;
     };
 };
 

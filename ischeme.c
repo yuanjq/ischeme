@@ -1,4 +1,3 @@
-#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <stdarg.h>
@@ -68,7 +67,7 @@ static inline bool is_any(Cell *c)     { return TRUE; }
 static inline bool is_boolean(Cell *c) { return c && T(c) == BOOLEAN; }
 static inline bool is_char(Cell *c)    { return c && T(c) == CHAR; }
 static inline bool is_number(Cell *c)  { return c && T(c) == NUMBER; }
-static inline bool is_real(Cell *c)    { return c && T(c) == NUMBER && (number_type(c) == NUMBER_LONG || number_type(c) == NUMBER_DOUBLE); }
+static inline bool is_real(Cell *c)    { return c && T(c) == NUMBER && (number_type(c) == NUMBER_LONG || number_type(c) == NUMBER_DOUBLE || number_type(c) == NUMBER_FRACTION); }
 static inline bool is_integer(Cell *c) { return is_number(c) && number_type(c) == NUMBER_LONG; }
 static inline bool is_natural(Cell *c) { return is_integer(c) && number_long(c) >= 0; }
 static inline bool is_string(Cell *c)  { return c && T(c) == STRING; }
@@ -76,7 +75,7 @@ static inline bool is_pair(Cell *c)    { return c && T(c) == PAIR; }
 static inline bool is_vector(Cell *c)  { return c && T(c) == VECTOR; }
 static inline bool is_symbol(Cell *c)  { return c && T(c) == SYMBOL; }
 static inline bool is_syntax(Cell *c)  { return c && T(c) == SYNTAX; }
-static inline bool is_closure_var(Cell *c) { return c && T(c) == CLOSURE_VAR; }
+static inline bool is_closure_expr(Cell *c) { return c && T(c) == CLOSURE_EXPR; }
 static inline bool is_closure(Cell *c) { return c && T(c) == CLOSURE; }
 static inline bool is_proc(Cell *c)    { return c && T(c) == PROC; }
 static inline bool is_iproc(Cell *c)   { return c && T(c) == IPROC; }
@@ -157,13 +156,24 @@ static char *string_dup(char *str) {
     return s;
 }
 
-static Cell *mk_string(Cell *ctx, char *str) {
-    uint size = strlen(str) + 1;
-    Cell *c = cell_alloc(ctx, cell_sizeof(str) + size);
+static Cell *mk_string(Cell *ctx, char *fmt, ...) {
+    int size = 0;
+    va_list ap;
+    Cell *c = NULL;
+
+    va_start(ap, fmt);
+    size = vsnprintf(NULL, size, fmt, ap);
+    va_end(ap);
+
+    size++;
+    c = cell_alloc(ctx, cell_sizeof(str) + size);
     if (c) {
         cell_type(c) = STRING;
         string_size(c) = size;
-        memcpy(string_data(c), str, size - 1);
+
+        va_start(ap, fmt);
+        size = vsnprintf(string_data(c), size, fmt, ap);
+        va_end(ap);
     }
     return c;
 }
@@ -188,12 +198,12 @@ static Cell *mk_vector(Cell *ctx, uint len, Cell *fill) {
     return c;
 }
 
-static Cell *mk_closure_var(Cell *ctx, Cell *var, Cell *env) {
-    Cell *c = closure_var_new(ctx);
+static Cell *mk_closure_expr(Cell *ctx, Cell *expr, Cell *env) {
+    Cell *c = closure_expr_new(ctx);
     if (c) {
-        cell_type(c) = CLOSURE_VAR;
-        closure_var_var(c) = var;
-        closure_var_env(c) = env;
+        cell_type(c) = CLOSURE_EXPR;
+        closure_expr_expr(c) = expr;
+        closure_expr_env(c) = env;
     }
     return c;
 }
@@ -584,6 +594,9 @@ static double real_compare(Cell *a, Cell *b) {
     case NUMBER_DOUBLE:
         d1 = number_double(a);
         break;
+    case NUMBER_FRACTION:
+        d1 = number_long(number_fn_nr(a)) / number_long(number_fn_dr(a));
+        break;
     }
     switch (number_type(b)) {
     case NUMBER_LONG:
@@ -592,13 +605,16 @@ static double real_compare(Cell *a, Cell *b) {
     case NUMBER_DOUBLE:
         d2 = number_double(b);
         break;
+    case NUMBER_FRACTION:
+        d2 = number_long(number_fn_nr(b)) / number_long(number_fn_dr(b));
+        break;
     }
     return d1 - d2;
 }
 
 static bool equal(Cell *a, Cell *b) {
-    if (is_closure_var(a)) a = closure_var_var(a);
-    if (is_closure_var(b)) b = closure_var_var(b);
+    if (is_closure_expr(a)) a = closure_expr_expr(a);
+    if (is_closure_expr(b)) b = closure_expr_expr(b);
     if (a == b) return TRUE;
     if (cell_type(a) != cell_type(b)) return FALSE;
     switch (cell_type(a)) {
@@ -634,8 +650,8 @@ static bool equal(Cell *a, Cell *b) {
 }
 
 static bool eqv(Cell *a, Cell *b) {
-    if (is_closure_var(a)) a = closure_var_var(a);
-    if (is_closure_var(b)) b = closure_var_var(b);
+    if (is_closure_expr(a)) a = closure_expr_expr(a);
+    if (is_closure_expr(b)) b = closure_expr_expr(b);
     if (a == b) return TRUE;
     if (cell_type(a) != cell_type(b)) return FALSE;
     switch (cell_type(a)) {
@@ -648,8 +664,8 @@ static bool eqv(Cell *a, Cell *b) {
 }
 
 static bool eq(Cell *a, Cell *b) {
-    if (is_closure_var(a)) a = closure_var_var(a);
-    if (is_closure_var(b)) b = closure_var_var(b);
+    if (is_closure_expr(a)) a = closure_expr_expr(a);
+    if (is_closure_expr(b)) b = closure_expr_expr(b);
     if (cell_type(a) != cell_type(b)) return FALSE;
     if (is_symbol(a)) return equal(a, b);
     return a == b;
@@ -824,7 +840,25 @@ static Cell* mk_env(Cell *ctx, Cell *env, Cell *s, Cell *v) {
 }
 
 static Cell *read_illegal(Cell *ctx, int c) {
-    return CELL_EOF;
+    char *str = "";
+    switch (c) {
+    case TOK_RPAREN:
+        str = ")";
+        break;
+    case TOK_RBRACKET:
+        str = "]";
+        break;
+    case TOK_RBRACE:
+        str = "}";
+        break;
+    case TOK_DOT:
+        str = ".";
+        break;
+    case TOK_ELLIPSIS:
+        str = "...";
+        break;
+    }
+    return mk_exception(ctx, SyntaxError, mk_string(ctx, "unexpected symbol: %s", str), NULL, NULL);
 }
 
 static inline int read_upto(Cell *port, char *upto, char **out, uint *psize) {
@@ -1017,7 +1051,7 @@ static void write_cell(Cell *ctx, Cell *port, Cell *c, bool readable, bool more,
     		}
         }
     } else if (is_pair(c)) {
-        Cell *d = is_closure_var(car(c)) ? closure_var_var(car(c)) : car(c);
+        Cell *d = car(c);
         bool quote = (d == ctx_quote(ctx)) || (d == ctx_quasiquote(ctx)) || (d == ctx_unquote(ctx) || (d == ctx_unquote_splicing(ctx)));
         if (quote && !(is_pair(cdr(c)) && is_nil(cadr(c)) && is_nil(cddr(c)))) quote = TRUE;
         if (!quote) {
@@ -1081,8 +1115,8 @@ static void write_cell(Cell *ctx, Cell *port, Cell *c, bool readable, bool more,
         }
         write_char(ctx, port, '\n');
         return;
-    } else if (is_closure_var(c)) {
-        write_cell(ctx, port, closure_var_var(c), readable, more, top);
+    } else if (is_closure_expr(c)) {
+        write_cell(ctx, port, closure_expr_expr(c), readable, more, top);
         return;
     } else {
         snprintf(s, STR_BUF_SIZE, "unknown:%p", c);
@@ -2238,39 +2272,41 @@ static Cell *_sequence_expand(Cell *ctx, Cell *expd, Cell *md, Cell *env, Cell *
     return CELL_NIL;
 }
 
-static Cell *_transform_closure_var(Cell *ctx, Cell *var, Cell *env) {
-    if (is_pair(var)) {
-        Cell *ret = cons(ctx, CELL_NIL, CELL_NIL);
-        for (Cell *ls=var; is_pair(ls); ls=cdr(ls)) {
-            list_add(ctx, ret, _transform_closure_var(ctx, car(ls), env));
+static Cell *_transform_closure_expr(Cell *ctx, Cell *expr, Cell *env) {
+    if (is_pair(expr)) {
+        for (Cell *ls=expr, *c; is_pair(ls); ls=cdr(ls)) {
+            c = car(ls);
+            if (is_pair(c) || is_symbol(c)) {
+                rplaca(ls, mk_closure_expr(ctx, c, env));
+            }
         }
-        return cdr(ret);
+        return expr;
+    } else if (is_symbol(expr)) {
+        return mk_closure_expr(ctx, expr, env);
     }
-    if (is_symbol(var)) {
-        return mk_closure_var(ctx, var, env);
-    }
-    return var;
+    return expr; 
 }
-
-static Cell *_unbinding_closure_var(Cell *var, Cell *c) {
+#if 0
+static Cell *_unbinding_closure_expr(Cell *var, Cell *c) {
     if (is_pair(var)) {
         for (Cell *d=var; is_pair(d); d=cdr(d)) {
             if (is_pair(car(d))) {
-                rplaca(d, _unbinding_closure_var(car(d), c));
-            } else if (is_closure_var(car(d)) && equal(closure_var_var(car(d)), c)) {
+                rplaca(d, _unbinding_closure_expr(car(d), c));
+            } else if (is_closure_expr(car(d)) && equal(closure_expr_expr(car(d)), c)) {
                 rplaca(d, c);
             }
-            if (is_closure_var(cdr(d)) && equal(closure_var_var(car(d)), c)) {
+            if (is_closure_expr(cdr(d)) && equal(closure_expr_expr(car(d)), c)) {
                 rplacd(d, c);
                 break;
             }
         }
         return var;
-    } else if (is_closure_var(var)) {
-        return closure_var_var(var);
+    } else if (is_closure_expr(var)) {
+        return closure_expr_expr(var);
     }
     return var;
 }
+#endif
 
 static Cell *syntax_template_expand(Cell *ctx, Cell *expd, Cell *md, Cell *env, Cell *idx) {
     switch (expander_type(expd)) {
@@ -2291,7 +2327,7 @@ static Cell *syntax_template_expand(Cell *ctx, Cell *expd, Cell *md, Cell *env, 
             }
             --n;
         }
-        return _transform_closure_var(ctx, var, env);
+        return _transform_closure_expr(ctx, var, env);
     }
     case ExpanderSequence:
         return _sequence_expand(ctx, expd, md, env, idx, expander_n(expd));
@@ -2387,15 +2423,6 @@ static Cell *syntax_matcher_analyze(Cell *ctx, Cell *lit, Cell *matches, Cell *s
         if (!is_pair(macher) || !is_pair(car(macher)) || !is_pair(cdr(macher)) || !is_nil(cddr(macher))) {
             return mk_exception(ctx, SyntaxError, mk_string(ctx, "invalid syntax format in syntax rules:"), macher, NULL);
         }
-        // unbinding closure var
-        for (Cell *ls=car(macher); is_pair(ls); ls=cdr(ls)) {
-            if (is_closure_var(car(ls))) {
-                rplaca(ls, closure_var_var(car(ls)));
-            }
-        }
-        for (Cell *ls=cdar(macher); is_pair(ls); ls=cdr(ls)) {
-            _unbinding_closure_var(cadr(macher), car(ls));
-        }
         Cell *pattern = syntax_pattern_analyze(ctx, lit, car(macher), syn_env, pat_vars);
         if (is_exception(pattern)) return pattern;
         Cell *template = syntax_template_analyze(ctx, cadr(macher), cdr(pat_vars));
@@ -2425,261 +2452,9 @@ static Cell *syntax_transform(Cell *ctx, Cell *machers, Cell *syn_env, Cell *exp
     return syntax_template_expand(ctx, template, cdr(md), expr_env, cons(ctx, CELL_NIL, CELL_NIL));
 }
 /******************** macro end *********************/
-#if 0
-static Cell *eval_qquote(Cell *ctx, Cell *code, int lv) {
-    if (is_pair(code)) {
-        Cell *ret = cons(ctx, CELL_NIL, CELL_NIL);
-        int lv1;
-        for (Cell *ls=code, *c, *d; is_pair(ls); ls=cdr(ls)) {
-            c = car(ls);
-            lv1 = lv;
-            if (is_pair(c)) {
-                d = car(c);
-                if (d == ctx_quasiquote(ctx)) {
-                    ++lv1;
-                } else if (d == ctx_unquote(ctx) || d == ctx_unquote_splicing(ctx)) {
-                    --lv1;
-                    if (lv1 == 0) {
-                        c = apply(ctx, OP_EVAL, CELL_NIL, cadr(c), ctx_env(ctx));
-                        if (d == ctx_unquote(ctx))
-                            list_add(ctx, ret, c);
-                        else if (!is_pair(c))
-                            return mk_exception(ctx, ValueError, mk_string(ctx, "unquote-splicing: not a list"), NULL, NULL);
-                        else
-                            list_extend(ctx, ret, c);
-                        continue;
-                    }
-                }
-            }
-            list_add(ctx, ret, eval_qquote(ctx, c, lv1));
-            if (!is_pair(cdr(ls)) && !is_nil(cdr(ls))) {
-                for (Cell *c=cdr(ret); is_pair(c); c=cdr(c)) {
-                    if (is_nil(cdr(c))) {
-                        rplacd(c, cdr(ls));
-                        break;
-                    }
-                }
-                break;
-            }
-        }
-        return cdr(ret);
-    }
-    return code;
-}
-
-static Cell *eval_let_syntax(Cell *ctx, Cell *code, bool rec) {
-    char *syn_name = "let-syntax";
-    Cell *c, *d, *e, *env, *bd_env, *bd_names;
-    c = car(code);
-    env = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
-    bd_env = ctx_env(ctx);
-    bd_names = cons(ctx, CELL_NIL, CELL_NIL);
-    
-    if (rec) {
-        syn_name = "letrec-syntax";
-        bd_env = env;
-    }
-    if (is_pair(c)) {
-        for (; is_pair(c); c=cdr(c)) {
-            d = car(c);
-            if (!is_pair(d)) goto Err;
-            if (is_closure_var(car(d))) {
-                rplaca(d, closure_var_var(car(d)));
-            }
-            if (!is_symbol(car(d)) || !is_pair(cdr(d)) || !is_nil(cddr(d)) || is_contains(bd_names, car(d))) {
-                goto Err;
-            }
-            list_add(ctx, bd_names, car(d));
-            e = apply(ctx, OP_EVAL, CELL_NIL, cadr(d), bd_env);
-            if (!is_proc(e)) {
-                goto Err;
-            }
-            e = apply(ctx, OP_APPLY, CELL_NIL, e, bd_env);
-            if (!is_pair(e) || !is_pair(car(e)) || !is_pair(cdr(e))) {
-                goto Err;
-            }
-            mk_env(ctx, env, car(d), mk_macro(ctx, cdr(e), car(e)));
-        }
-    } else if (!is_nil(c)) {
-        goto Err;
-    }
-    return apply(ctx, OP_EVAL_LIST, CELL_NIL, cdr(code), env);
-Err:
-    return mk_exception(ctx, SyntaxError, mk_string(ctx, syn_name), NULL, NULL);
-}
-
-static Cell *eval_do(Cell *ctx, Cell *code) {
-    Cell *c, *d, *e, *env, *names;
-    c = car(code);
-    d = cadr(code);
-    e = cddr(code);
-    env = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
-    names = cons(ctx, CELL_NIL, CELL_NIL);
-
-    for (Cell *ls=c, *f,*g; is_pair(ls); ls=cdr(ls)) {
-        f = car(ls);
-        if (!is_pair(f)) goto Err;
-        if (is_closure_var(car(f))) {
-            rplaca(f, closure_var_var(car(f)));
-        }
-        if (!is_symbol(car(f)) || !is_pair(cdr(f)) || is_contains(names, car(f))) {
-            goto Err;
-        }
-        list_add(ctx, names, car(f));
-        g = apply(ctx, OP_EVAL, CELL_NIL, cadr(f), ctx_env(ctx));
-        if (is_exception(g)) goto Err;
-        mk_env(ctx, env, car(f), g);
-    }
-    if (!is_pair(d)) goto Err;
-    for (;;) {
-        Cell *f = apply(ctx, OP_EVAL, CELL_NIL, car(d), env);
-        if (is_exception(f)) goto Err;
-        if (f != CELL_FALSE) {
-            if (is_nil(cdr(d))) return CELL_UNDEF;
-            return apply(ctx, OP_EVAL_LIST, CELL_NIL, cdr(d), env);
-        }
-        if (!is_nil(e)) {
-            apply(ctx, OP_EVAL_LIST, CELL_NIL, e, env);
-        }
-        for (Cell *ls=c; is_pair(ls); ls=cdr(ls)) {
-            f = car(ls);
-            if (is_pair(cddr(f))) {
-                Cell *g = apply(ctx, OP_EVAL, CELL_NIL, caddr(f), env);
-                if (is_exception(g)) goto Err;
-                set_env(ctx, env, car(f), g);
-            }
-        }
-    }
-Err:
-    return mk_exception(ctx, SyntaxError, mk_string(ctx, "do"), NULL, NULL);
-}
-
-static Cell *eval_letrec(Cell *ctx, Cell *code) {
-    Cell *c, *d, *e, *f, *env, *bd_names;
-    c = car(code);
-    env = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
-    bd_names = cons(ctx, CELL_NIL, CELL_NIL);
-    
-    if (is_pair(c)) {
-        for (e=c; is_pair(e); e=cdr(e)) {
-            d = car(e);
-            if (!is_pair(d)) goto Err;
-            if (is_closure_var(car(d))) {
-                rplaca(d, closure_var_var(car(d)));
-            }
-            if (!is_symbol(car(d)) || !is_pair(cdr(d)) || !is_nil(cddr(d)) || is_contains(bd_names, d)) {
-                goto Err;
-            }
-            list_add(ctx, bd_names, car(d));
-            mk_env(ctx, env, car(d), CELL_NIL);
-        }
-        for (e=c; is_pair(e); e=cdr(e)) {
-            d = car(e);
-            f = apply(ctx, OP_EVAL, CELL_NIL, cadr(d), env);
-            if (is_exception(f)) return f;
-            set_env(ctx, env, car(d), f);
-        }
-    } else if (!is_nil(c)) {
-        goto Err;
-    }
-    return apply(ctx, OP_EVAL_LIST, CELL_NIL, cdr(code), env);
-Err:
-    return mk_exception(ctx, SyntaxError, mk_string(ctx, "letrec"), NULL, NULL);
-}
-
-static Cell *eval_cond(Cell *ctx, Cell *code) {
-    Cell *c, *d, *e;
-    for (Cell *ls=code; is_pair(ls); ls=cdr(ls)) {
-        c = car(ls);
-        if (!is_pair(c)) {
-            if (is_pair(cdr(ls)))
-                return mk_exception(ctx, SyntaxError, mk_string(ctx, "cond: clause lack of test expression"), NULL, NULL);
-        }
-        d = car(c);
-        if (is_closure_var(d)) {
-            d = closure_var_var(d);
-        }
-        if (is_symbol(d) && !strcmp(symbol(d), "else")) {
-            if (is_pair(cdr(ls)))
-                return mk_exception(ctx, SyntaxError, mk_string(ctx, "cond: 'else' clause must be last"), NULL, NULL);
-            if (!is_pair(cdr(c)))
-                return mk_exception(ctx, SyntaxError, mk_string(ctx, "cond: missing expressions in 'else' clause"), NULL, NULL);
-        }
-    }
-    for (Cell *ls=code; is_pair(ls); ls=cdr(ls)) {
-        c = car(ls);
-        d = car(c);
-        if (is_closure_var(d)) {
-            d = closure_var_var(d);
-        }
-        if (is_symbol(d) && !strcmp(symbol(d), "else")) {
-            return apply(ctx, OP_EVAL_LIST, CELL_NIL, cdr(c), ctx_env(ctx));
-        }
-        d = apply(ctx, OP_EVAL, CELL_NIL, car(c), ctx_env(ctx));
-        if (is_exception(d)) return d;
-        if (is_false(d)) continue; 
-        if (is_pair(cdr(c))) {
-            e = cadr(c);
-            if (is_closure_var(e)) {
-                e = closure_var_var(e);
-            }
-            if (is_symbol(e) && !strcmp(symbol(e), "=>")) {
-                if (!is_pair(cddr(c)) || !is_nil(cdddr(c))) return mk_exception(ctx, SyntaxError, mk_string(ctx, "cond: 'bad clause form with '=>'"), NULL, NULL);
-                e = apply(ctx, OP_EVAL, CELL_NIL, caddr(c), ctx_env(ctx));
-                if (is_exception(e)) return e;
-                return apply(ctx, OP_APPLY, cons(ctx, d, CELL_NIL), e, ctx_env(ctx));
-            }
-            return apply(ctx, OP_EVAL_LIST, CELL_NIL, cdr(c), ctx_env(ctx));
-        }
-        return d;
-    }
-}
-
-static Cell *eval_case(Cell *ctx, Cell *code) {
-    Cell *c, *d, *e;
-    c = car(code);
-    for (Cell *ls=cdr(code); is_pair(ls); ls=cdr(ls)) {
-        d = car(ls);
-        if (!is_pair(d)) {
-            return mk_exception(ctx, SyntaxError, mk_string(ctx, "case: illegal format clause"), NULL, NULL);
-        }
-        e = car(d);
-        if (is_closure_var(e)) {
-            e = closure_var_var(e);
-        }
-        if (is_symbol(e) && !strcmp(symbol(e), "else")) {
-            if (is_pair(cdr(ls))) {
-                return mk_exception(ctx, SyntaxError, mk_string(ctx, "case: 'else' clause must be last"), NULL, NULL);
-            }
-            continue;
-        }
-        if (!is_list(e)) {
-            return mk_exception(ctx, SyntaxError, mk_string(ctx, "case: datum not a sequence"), NULL, NULL);
-        }
-        if (!is_pair(cdr(d))) {
-            return mk_exception(ctx, SyntaxError, mk_string(ctx, "case: missing expression after datum sequence"), NULL, NULL);
-        }
-    }
-
-    c = apply(ctx, OP_EVAL, CELL_NIL, c, ctx_env(ctx));
-    if (is_exception(c)) return c;
-    for (Cell *ls=code; is_pair(ls); ls=cdr(ls)) {
-        d = car(ls);
-        e = car(d);
-        if (is_closure_var(e)) {
-            e = closure_var_var(e);
-        }
-        if ((is_symbol(e) && !strcmp(symbol(e), "else")) ||
-             is_contains(e, c)) {
-            return apply(ctx, OP_EVAL_LIST, CELL_NIL, cdr(d), ctx_env(ctx));
-        }
-    }
-    return CELL_UNDEF;
-}
-#endif
 
 static Cell *isc_repl(Cell *ctx) {
-    Cell *c, *d, *e;
+    Cell *a, *b, *c, *d, *e;
     ctx_op(ctx) = OP_REPL_LOOP;
 Loop:
     if ((c = arg_type_check(ctx)) != CELL_TRUE) {
@@ -2765,10 +2540,12 @@ Loop:
         popOp(ctx, CELL_UNDEF);
     case OP_SET:
         c = car(ctx_code(ctx));
-        if (is_closure_var(c)) {
-            ctx_env(ctx) = closure_var_env(c);
-            c = closure_var_var(c);
+#if 0
+        if (is_closure_expr(c)) {
+            ctx_env(ctx) = closure_expr_env(c);
+            c = closure_expr_expr(c);
         }
+#endif
         if (!is_symbol(c)) gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "parameter is not an identifier:"), c, NULL));
         if (is_nil(find_env(c, cdr(ctx_env(ctx))))) {
             gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "unbound variable:"), c, NULL));
@@ -2815,7 +2592,12 @@ Loop:
     case OP_EVAL:
         if (is_nil(ctx_code(ctx))) {
             gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "illegal empty expresion"), NULL, NULL));
-        } else if (is_symbol(ctx_code(ctx))) {
+        }
+        if (is_closure_expr(ctx_code(ctx))) {
+            ctx_env(ctx) = closure_expr_env(ctx_code(ctx));
+            ctx_code(ctx) = closure_expr_expr(ctx_code(ctx));
+        }
+        if (is_symbol(ctx_code(ctx))) {
             c = find_env(ctx_code(ctx), cdr(ctx_env(ctx)));
             if (is_pair(c)) {
                 c = cdr(c);
@@ -2825,24 +2607,9 @@ Loop:
                 popOp(ctx, c);
             }
             gotoErr(ctx, mk_exception(ctx, ReferenceError, mk_string(ctx, "unbound variable:"), ctx_code(ctx), NULL));
-        } else if (is_closure_var(ctx_code(ctx))) {
-            c = closure_var_var(ctx_code(ctx));
-            c = find_env(c, closure_var_env(ctx_code(ctx)));
-            if (is_pair(c)) {
-                c = cdr(c);
-                if (is_syntax(c)) {
-                    gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "invalid use of syntax as value:"),  closure_var_var(ctx_code(ctx)), NULL));
-                }
-                popOp(ctx, c);
-            }
-            gotoErr(ctx, mk_exception(ctx, ReferenceError, mk_string(ctx, "unbound variable:"),  closure_var_var(ctx_code(ctx)), NULL));
         } else if (is_pair(ctx_code(ctx))) {
             c = car(ctx_code(ctx));
             d = ctx_env(ctx);
-            if (is_closure_var(c)) {
-                d = closure_var_env(c);
-                c = closure_var_var(c);
-            }
             if (is_syntax(c)) {
                 ctx_code(ctx) = cdr(ctx_code(ctx));
                 gotoOp(ctx, syntax_op(c));
@@ -2917,7 +2684,7 @@ Loop:
             ctx_continue(ctx) = cons(ctx, continues_car(ctx_code(ctx)), continues_cdr(ctx_code(ctx)));            
             popOp(ctx, ctx_args(ctx) != CELL_NIL ? car(ctx_args(ctx)) : CELL_NIL);
         }
-        gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "illegal procedure"), NULL, NULL));
+        gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "illegal procedure: "), ctx_code(ctx), NULL));
      case OP_EVAL_LIST:
         if (is_pair(ctx_code(ctx))) {
             if (!is_nil(cdr(ctx_code(ctx)))) {
@@ -2971,30 +2738,192 @@ Loop:
         ctx_args(ctx) = CELL_NIL;
         gotoOp(ctx, OP_EVAL_LIST);
     case OP_COND:
-        //if (is_exception(c = eval_cond(ctx, ctx_code(ctx))))
-        //    gotoErr(ctx, c);
-        //popOp(ctx, c);
-        break;
+        c = ctx_code(ctx);
+        for (Cell *ls=c; is_pair(ls); ls=cdr(ls)) {
+            a = car(ls);
+            if (!is_pair(a)) {
+                if (is_pair(cdr(ls)))
+                    gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "cond: clause lack of test expression"), NULL, NULL));
+            }
+            d = car(a);
+            if (is_symbol(d) && !strcmp(symbol(d), "else")) {
+                if (is_pair(cdr(ls)))
+                    gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "cond: 'else' clause must be last"), NULL, NULL));
+                if (!is_pair(cdr(a)))
+                    gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "cond: missing expressions in 'else' clause"), NULL, NULL));
+            }
+        }
+        if (is_pair(c)) {
+            e = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
+            ctx_ret(ctx) = CELL_FALSE;
+            gotoOpEx(ctx, OP_COND1, CELL_NIL, c, CELL_NIL, e);
+        }
+        popOp(ctx, CELL_UNDEF);
+    case OP_COND1:
+        a = ctx_ret(ctx);
+        c = ctx_code(ctx);
+        d = ctx_data(ctx);
+        if (!is_false(a)) {
+            b = car(d);
+            if (is_symbol(b) && !strcmp(symbol(b), "=>")) {
+                if (!is_pair(cdr(d)) || !is_nil(cddr(d))) return mk_exception(ctx, SyntaxError, mk_string(ctx, "cond: 'bad clause form with '=>'"), NULL, NULL);
+                d = cadr(d);
+                if (is_proc(d)) {
+                    ctx_ret(ctx) = d;
+                    gotoOpEx(ctx, OP_COND2, CELL_NIL, a, CELL_NIL, ctx_env(ctx));
+                }
+                pushOp(ctx, OP_COND2, CELL_NIL, a);
+                gotoOpEx(ctx, OP_EVAL, CELL_NIL, d, CELL_NIL, ctx_env(ctx));
+            }
+            gotoOpEx(ctx, OP_EVAL_LIST, CELL_NIL, d, CELL_NIL, ctx_env(ctx));
+        }
+        if (is_pair(c)) {
+            d = car(c);
+            pushOpEx(ctx, OP_COND1, CELL_NIL, cdr(c), cdr(d), e);
+            a = car(d);
+            if (is_symbol(a) && !strcmp(symbol(a), "else")) {
+                gotoOpEx(ctx, OP_EVAL_LIST, CELL_NIL, cdr(d), CELL_NIL, e);
+            }
+            gotoOpEx(ctx, OP_EVAL, CELL_NIL, a, CELL_NIL, e);
+        }
+        popOp(ctx, CELL_UNDEF);
+    case OP_COND2:
+        a = ctx_ret(ctx);
+        c = ctx_code(ctx);
+        if (!is_proc(a)) {
+            gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "cond: not a procedure"), NULL, NULL));
+        }
+        gotoOpEx(ctx, OP_APPLY, cons(ctx, c, CELL_NIL), a, CELL_NIL, ctx_env(ctx));
     case OP_CASE:
-        //if (is_exception(c = eval_case(ctx, ctx_code(ctx))))
-        //    gotoErr(ctx, c);
-        //popOp(ctx, c);
-        break;
+        c = car(ctx_code(ctx));
+        for (Cell *ls=cdr(ctx_code(ctx)); is_pair(ls); ls=cdr(ls)) {
+            d = car(ls);
+            if (!is_pair(d)) {
+                gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "case: illegal format clause"), NULL, NULL));
+            }
+            e = car(d);
+            if (is_symbol(e) && !strcmp(symbol(e), "else")) {
+                if (is_pair(cdr(ls))) {
+                    gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "case: 'else' clause must be last"), NULL, NULL));
+                }
+                continue;
+            }
+            if (!is_list(e)) {
+                gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "case: datum not a sequence"), NULL, NULL));
+            }
+            if (!is_pair(cdr(d))) {
+                gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "case: missing expression after datum sequence"), NULL, NULL));
+            }
+        }
+        d = cdr(ctx_code(ctx));
+        if (is_pair(d)) {
+            e = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
+            pushOpEx(ctx, OP_CASE1, CELL_NIL, d, CELL_NIL, e);
+            gotoOpEx(ctx, OP_EVAL, CELL_NIL, c, CELL_NIL, e);
+        }
+        popOp(ctx, CELL_UNDEF);
+    case OP_CASE1:
+        c = ctx_code(ctx);
+        d = ctx_ret(ctx);
+        for (Cell *ls=c; is_pair(ls); ls=cdr(ls)) {
+            a = car(ls);
+            b = car(a);
+            if ((is_symbol(b) && !strcmp(symbol(b), "else")) ||
+                 is_contains(b, d)) {
+                gotoOpEx(ctx, OP_EVAL_LIST, CELL_NIL, cdr(a), CELL_NIL, ctx_env(ctx));
+            }
+        }
+        popOp(ctx, CELL_UNDEF);
     case OP_BEGIN:
         ctx_env(ctx) = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
         ctx_args(ctx) = CELL_NIL;
         gotoOp(ctx, OP_EVAL_LIST);
     case OP_DO:
-        //c = eval_do(ctx, ctx_code(ctx));
-        //if (is_exception(c)) gotoErr(ctx, c);
-        //popOp(ctx, c);
-        break;
+        c = car(ctx_code(ctx));
+        d = cdr(ctx_code(ctx));
+        e = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
+        if (is_pair(c)) {
+            b = cons(ctx, CELL_NIL, CELL_NIL);
+            for (Cell *ls=c; is_pair(ls); ls=cdr(ls)) {
+                a = car(ls);
+                if (!is_pair(a) || !is_symbol(car(a)) || !is_pair(cdr(a)) || is_contains(b, car(a))) {
+                    gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "do"), NULL, NULL));
+                }
+                list_add(ctx, b, car(a));
+                mk_env(ctx, e, car(a), CELL_UNDEF);
+            }
+            if (!is_pair(d) || !is_pair(car(d))) {
+                gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "do: missing test expression"), NULL, NULL)); 
+            }
+            pushOpEx(ctx, OP_DO1, CELL_NIL, cdr(c), cons(ctx, ctx_code(ctx), cons(ctx, cdr(b), e)), ctx_env(ctx));
+            gotoOpEx(ctx, OP_EVAL, CELL_NIL, cadar(c), CELL_NIL, ctx_env(ctx));
+        }
+        if (!is_pair(d) || !is_pair(car(d))) {
+            gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "do: missing test expression"), NULL, NULL)); 
+        }
+        gotoOpEx(ctx, OP_DO2, CELL_NIL, ctx_code(ctx), CELL_NIL, e);
+    case OP_DO1:
+        c = ctx_code(ctx);
+        ctx_args(ctx) = cons(ctx, ctx_ret(ctx), ctx_args(ctx));
+        if (is_pair(c)) {
+            pushOpEx(ctx, OP_DO1, ctx_args(ctx), cdr(ctx_code(ctx)), ctx_data(ctx), ctx_env(ctx));
+            gotoOpEx(ctx, OP_EVAL, CELL_NIL, cadar(c), CELL_NIL, ctx_env(ctx));
+        }
+        ctx_args(ctx) = reverse(ctx, ctx_args(ctx));
+        c = car(ctx_data(ctx));
+        b = cadr(ctx_data(ctx));
+        e = cddr(ctx_data(ctx));
+        for (Cell *ls=ctx_args(ctx); is_pair(ls); ls=cdr(ls), b=cdr(b)) {
+            set_env(ctx, e, car(b), car(ls));
+        }
+        b = cons(ctx, CELL_NIL, CELL_NIL);
+        for (Cell *ls=car(c); is_pair(ls); ls=cdr(ls)) {
+            a = car(ls);
+            if (is_pair(cddr(a))) {
+                list_add(ctx, b, cons(ctx, car(a), caddr(a)));
+            }
+        }
+        gotoOpEx(ctx, OP_DO2, cdr(b), c, CELL_NIL, e);
+    case OP_DO2:
+        pushOp(ctx, OP_DO3, ctx_args(ctx), ctx_code(ctx));
+        gotoOpEx(ctx, OP_EVAL, CELL_NIL, caadr(ctx_code(ctx)), CELL_NIL, ctx_env(ctx));
+    case OP_DO3:
+        c = ctx_ret(ctx);
+        if (!is_false(c)) {
+            c = cdadr(ctx_code(ctx));
+            if (is_nil(c)) popOp(ctx, CELL_UNDEF);
+            gotoOpEx(ctx, OP_EVAL_LIST, CELL_NIL, c, CELL_NIL, ctx_env(ctx));
+        }
+        c = ctx_args(ctx);
+        if (is_pair(c)) {
+            pushOpEx(ctx, OP_DO4, CELL_NIL, cdr(c), cons(ctx, c, ctx_code(ctx)), ctx_env(ctx));
+            pushOpEx(ctx, OP_EVAL, CELL_NIL, cdar(c), CELL_NIL, ctx_env(ctx));
+        } else {
+            pushOpEx(ctx, OP_DO4, CELL_NIL, CELL_NIL, cons(ctx, CELL_NIL, ctx_code(ctx)), ctx_env(ctx));
+        }
+        c = cddr(ctx_code(ctx));
+        if (is_pair(c)) {
+            gotoOpEx(ctx, OP_EVAL_LIST, CELL_NIL, c, CELL_NIL, ctx_env(ctx));
+        }
+        popOp(ctx, CELL_UNDEF);
+    case OP_DO4:
+        c = ctx_code(ctx);
+        d = ctx_data(ctx);
+        if (!is_nil(car(d))) {
+            ctx_args(ctx) = cons(ctx, ctx_ret(ctx), ctx_args(ctx));
+        }
+        if (is_pair(c)) {
+            pushOpEx(ctx, OP_DO4, ctx_args(ctx), cdr(c), ctx_data(ctx), ctx_env(ctx));
+            gotoOpEx(ctx, OP_EVAL, CELL_NIL, cdar(c), CELL_NIL, ctx_env(ctx));
+        }
+        ctx_args(ctx) = reverse(ctx, ctx_args(ctx));
+        for (a=car(d), b=ctx_args(ctx); is_pair(a); a=cdr(a), b=cdr(b)) {
+            set_env(ctx, ctx_env(ctx), caar(a), car(b));
+        }
+        gotoOpEx(ctx, OP_DO2, car(d), cdr(d), CELL_NIL, ctx_env(ctx));
     case OP_LET:
         ctx_args(ctx) = CELL_NIL;
         ctx_ret(ctx) = ctx_code(ctx);
-        if (is_closure_var(c = car(ctx_code(ctx)))) {
-            rplaca(ctx_code(ctx), closure_var_var(c));
-        }
         ctx_code(ctx) = is_symbol(car(ctx_code(ctx))) ? cadr(ctx_code(ctx)) : car(ctx_code(ctx));
         gotoOp(ctx, OP_LET1);
     case OP_LET1:
@@ -3002,9 +2931,6 @@ Loop:
         if (is_pair(ctx_code(ctx))) {
             if (!is_pair(c = car(ctx_code(ctx))) || !is_pair(cdr(c))) {
                 gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "let: bad syntax of binding"), NULL, NULL));
-            }
-            if (is_closure_var(car(c))) {
-                rplaca(c, closure_var_var(car(c)));
             }
             if (!is_symbol(car(c))) {
                 gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "let: bad syntax of binding"), NULL, NULL));
@@ -3029,7 +2955,6 @@ Loop:
         }
         for (Cell *a = ctx_args(ctx); !is_nil(a); c = cdr(c), a = cdr(a)) {
             mk_env(ctx, ctx_env(ctx), caar(c), car(a));
-            d = _unbinding_closure_var(d, caar(c));
         }
         if (is_symbol(car(ctx_code(ctx)))) {
             for (c = cadr(ctx_code(ctx)), ctx_args(ctx) = CELL_NIL; !is_nil(c); c = cdr(c)) {
@@ -3076,69 +3001,114 @@ Loop:
             gotoOp(ctx, OP_EVAL_LIST);
         }
     case OP_LETREC:
-        //TODO
-        break;
+        c = car(ctx_code(ctx));
+        d = cdr(ctx_code(ctx));
+        e = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
+        if (is_pair(c)) {
+            b = cons(ctx, CELL_NIL, CELL_NIL);
+            for (Cell *ls=c; is_pair(ls); ls=cdr(ls)) {
+                a = car(ls);
+                if (!is_pair(a)) {
+                    gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "letrec"), NULL, NULL));
+                }
+                if (!is_symbol(car(a)) || !is_pair(cdr(a)) || !is_nil(cddr(a)) || is_contains(b, car(a))) {
+                    gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "let-rec"), NULL, NULL));
+                }
+                list_add(ctx, b, car(a));
+                mk_env(ctx, e, car(a), CELL_UNDEF);
+            }
+            b = cdr(b);
+            pushOpEx(ctx, OP_LETREC1, cons(ctx, b, d), cdr(c), CELL_NIL, e);
+            c = cadar(c);
+            gotoOpEx(ctx, OP_EVAL, CELL_NIL, c, CELL_NIL, e);
+        }
+        ctx_code(ctx) = d;
+        ctx_env(ctx) = e;
+        gotoOp(ctx, OP_EVAL_LIST);
+    case OP_LETREC1:
+        c = ctx_code(ctx);
+        ctx_data(ctx) = cons(ctx, ctx_ret(ctx), ctx_data(ctx));
+        if (is_pair(c)) {
+            pushOpEx(ctx, OP_LETREC1, ctx_args(ctx), cdr(c), ctx_data(ctx), ctx_env(ctx));
+            c = cadar(c);
+            gotoOpEx(ctx, OP_EVAL, CELL_NIL, c, CELL_NIL, ctx_env(ctx));
+        }
+        a = car(ctx_args(ctx));
+        b = reverse(ctx, ctx_data(ctx));
+        d = cdr(ctx_args(ctx));
+        e = ctx_env(ctx);
+        for (Cell *ls=a; is_pair(ls); ls=cdr(ls), b=cdr(b)) {
+            set_env(ctx, e, car(ls), car(b));
+        }
+        ctx_code(ctx) = d;
+        gotoOp(ctx, OP_EVAL_LIST);
     case OP_LET_SYNTAX:
     case OP_LETREC_SYNTAX:
         c = car(ctx_code(ctx));
         d = cdr(ctx_code(ctx));
+        e = cons(ctx, mk_long(ctx, op), cdr(ctx_env(ctx)));
         if (is_pair(c)) {
-            Cell *env = cons(ctx, mk_long(ctx, op), cdr(ctx_env(ctx)));
-            Cell *bd_names = cons(ctx, CELL_NIL, CELL_NIL);
-            if (op == OP_LETREC_SYNTAX) {
-                ctx_env(ctx) = env;
+            char *opn = (op == OP_LET_SYNTAX) ? "let-syntax" : "letrec-syntax";
+            b = cons(ctx, CELL_NIL, CELL_NIL);
+            for (Cell *ls=c; is_pair(ls); ls=cdr(ls)) {
+                a = car(ls);
+                if (!is_pair(a)) {
+                    gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, opn), NULL, NULL));
+                }
+                if (!is_symbol(car(a)) || !is_pair(cdr(a)) || !is_nil(cddr(a)) || is_contains(b, car(a))) {
+                    gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, opn), NULL, NULL));
+                }
+                list_add(ctx, b, car(a));
+                if (op ==  OP_LETREC_SYNTAX)
+                mk_env(ctx, e, car(a), CELL_UNDEF);
             }
-            pushOpEx(ctx, OP_LET_SYNTAX2, cons(ctx, bd_names, d), cdr(c), env, ctx_env(ctx));
-            gotoOpEx(ctx, OP_LET_SYNTAX1, cons(ctx, bd_names, d), car(c), env, ctx_env(ctx));
+            if (op == OP_LET_SYNTAX) {
+                d = cons(ctx, d, CELL_NIL);
+            }
+            pushOpEx(ctx, OP_LET_SYNTAX1, cdr(b), cdr(c), d, e);
+            gotoOpEx(ctx, OP_EVAL, CELL_NIL, cadar(c), CELL_NIL, e);
         }
         ctx_args(ctx) = CELL_NIL;
         ctx_code(ctx) = d;
+        ctx_env(ctx) = e;
         gotoOp(ctx, OP_EVAL_LIST);
     case OP_LET_SYNTAX1:
-        c = ctx_code(ctx);
-        d = car(ctx_args(ctx));
-        if (!is_pair(c)) {
-            int op = number_long(car(ctx_data(ctx)));
-            gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, (op == OP_LET_SYNTAX) ? "let-syntax" : "letrc-syntax"), NULL, NULL));
-        }
-        if (is_closure_var(car(c))) {
-            rplaca(c, closure_var_var(car(c)));
-        }
-        if (!is_symbol(car(c)) || !is_pair(cdr(c)) || !is_nil(cddr(c)) || is_contains(d, car(c))) {
-            int op = number_long(car(ctx_data(ctx)));
-            gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, (op == OP_LET_SYNTAX) ? "let-syntax" : "letrc-syntax"), NULL, NULL));
-        }
-        list_add(ctx, d, car(c));
-        ctx_args(ctx) = CELL_NIL;
-        ctx_code(ctx) = cadr(c);
-        gotoOp(ctx, OP_EVAL);
-    case OP_LET_SYNTAX2:
         c = ctx_ret(ctx);
         if (!is_proc(c)) {
-            int op = number_long(car(ctx_data(ctx)));
+            op = number_long(car(ctx_env(ctx)));
             gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, (op == OP_LET_SYNTAX) ? "let-syntax" : "letrc-syntax"), NULL, NULL));
         }
-        pushOpEx(ctx, OP_LET_SYNTAX3, ctx_args(ctx), ctx_code(ctx), ctx_data(ctx), ctx_env(ctx));
+        pushOpEx(ctx, OP_LET_SYNTAX2, ctx_args(ctx), ctx_code(ctx), ctx_data(ctx), ctx_env(ctx));
         gotoOpEx(ctx, OP_APPLY, CELL_NIL, c, CELL_NIL, ctx_env(ctx));
-    case OP_LET_SYNTAX3:
-        c = ctx_ret(ctx);
-        if (!is_pair(c) || !is_pair(car(c)) || !is_pair(cdr(c))) {
-            int op = number_long(car(ctx_data(ctx)));
+    case OP_LET_SYNTAX2:
+        a = ctx_ret(ctx);
+        b = ctx_args(ctx);
+        c = ctx_code(ctx);
+        d = ctx_data(ctx);
+        e = ctx_env(ctx);
+        op = number_long(car(e));
+        if (!is_pair(a) || !is_pair(car(a)) || !is_pair(cdr(a))) {
             gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, (op == OP_LET_SYNTAX) ? "let-syntax" : "letrc-syntax"), NULL, NULL));
         }
-        d = list_tail(car(ctx_args(ctx)));
-        mk_env(ctx, ctx_data(ctx), d, mk_macro(ctx, cdr(c), car(c)));
-        e = ctx_code(ctx);
-        if (is_pair(e)) {
-            pushOpEx(ctx, OP_LET_SYNTAX2, ctx_args(ctx), cdr(e), ctx_data(ctx), ctx_env(ctx));
-            gotoOpEx(ctx, OP_LET_SYNTAX1, ctx_args(ctx), car(e), ctx_data(ctx), ctx_env(ctx));
+        if (op == OP_LETREC_SYNTAX) {
+            for (Cell *ls=b; is_pair(ls); ls=cdr(ls)) {
+                set_env(ctx, e, car(ls), mk_macro(ctx, cdr(a), car(a)));
+            }
+        } else {
+            list_add(ctx, d, mk_macro(ctx, cdr(a), car(a)));
         }
-        // unbinding closure var
-        for (Cell *ls=car(ctx_args(ctx)); is_pair(ls); ls=cdr(ls)) {
-            _unbinding_closure_var(cdr(ctx_args(ctx)), car(ls));
+        if (is_pair(c)) {
+            pushOpEx(ctx, OP_LET_SYNTAX1, b, cdr(c), d, e);
+            gotoOpEx(ctx, OP_EVAL, CELL_NIL, cadar(c), CELL_NIL, e);
         }
-        ctx_code(ctx) = cdr(ctx_args(ctx));
-        ctx_env(ctx) = ctx_data(ctx);
+        if (op == OP_LET_SYNTAX) {
+            c = cdr(d);
+            d = car(d);
+            for (Cell *ls=b; is_pair(ls); ls=cdr(ls), c=cdr(c)) {
+                mk_env(ctx, e, car(ls), car(c));
+            }
+        }
+        ctx_code(ctx) = d;
         gotoOp(ctx, OP_EVAL_LIST);
     case OP_QUOTE:
         popOp(ctx, car(ctx_code(ctx)));
@@ -3151,9 +3121,6 @@ Loop:
         if (is_pair(c)) {
             long lv = number_long(d);
             e = car(c);
-            if (is_closure_var(e)) {
-                e = closure_var_var(e);
-            }
             if (e == ctx_quasiquote(ctx)) {
                 ++lv;
             } else if (e == ctx_unquote(ctx) || e == ctx_unquote_splicing(ctx)) {
@@ -3228,9 +3195,6 @@ Loop:
         else c = ctx_outport(ctx);
         write_char(ctx, c, '\n');
         popOp(ctx, CELL_UNDEF);
-    case OP_NULL_P:
-        c = car(ctx_args(ctx));
-        popOp(ctx, is_nil(c) ? CELL_TRUE : CELL_FALSE);
     case OP_BOOLEAN_P:
         c = car(ctx_args(ctx));
         popOp(ctx, is_boolean(c) ? CELL_TRUE : CELL_FALSE);
@@ -3252,6 +3216,9 @@ Loop:
     case OP_NOT:
         c = car(ctx_args(ctx));
         popOp(ctx, is_false(c) ? CELL_TRUE : CELL_FALSE);
+    case OP_NULL_P:
+        c = is_nil(car(ctx_args(ctx))) ? CELL_TRUE : CELL_FALSE;
+        popOp(ctx, c);
     case OP_EQ_P:
         c = eq(car(ctx_args(ctx)), cadr(ctx_args(ctx))) ? CELL_TRUE : CELL_FALSE;
         popOp(ctx, c);
@@ -3427,17 +3394,39 @@ Loop:
         popOp(ctx, is_port(c) ? CELL_TRUE : CELL_FALSE);
 
 /************* numeric ************/
+    case OP_ODD_P:
+        c = car(ctx_args(ctx));
+        popOp(ctx, number_long(c) % 2 ? CELL_TRUE : CELL_FALSE);
+    case OP_EVEN_P:
+        c = car(ctx_args(ctx));
+        popOp(ctx, number_long(c) % 2 ? CELL_FALSE : CELL_TRUE);
     case OP_LP:
     case OP_GP:
+    case OP_LEP:
+    case OP_GEP:
         c = car(ctx_args(ctx));
         d = cdr(ctx_args(ctx));
         for (double e; is_pair(d); d=cdr(d)) {
             e = real_compare(c, car(d));
-            if (op == OP_LP && e >= 0) popOp(ctx, CELL_FALSE);
-            if (op == OP_GP && e <= 0) popOp(ctx, CELL_FALSE);
+            switch (op) {
+            case OP_LP:
+                if (e >= 0) popOp(ctx, CELL_FALSE);
+                break;
+            case OP_GP:
+                if (e <= 0) popOp(ctx, CELL_FALSE);
+                break;
+            case OP_LEP:
+                if (e > 0) popOp(ctx, CELL_FALSE);
+                break;
+            case OP_GEP:
+                if (e < 0) popOp(ctx, CELL_FALSE);
+            }
             c = car(d);
         }
         popOp(ctx, CELL_TRUE);
+    case OP_EP:
+        c = ctx_args(ctx);
+        popOp(ctx, num_equal(car(c), cadr(c)) ? CELL_TRUE : CELL_FALSE);
     case OP_ADD:
     case OP_SUB:
     case OP_MULTI:

@@ -6,6 +6,8 @@
         (display "pass!\n")
         (display "fail!\n"))))))
     
+(define cadr (lambda (a) (car (cdr a))))
+
 ;; macro test
 (define-syntax aaa (syntax-rules ()
     ((_ ((a ...) (b ...)) ...) '(a ... ... b ... ...))
@@ -168,7 +170,6 @@
 (test 'equal (cond ((> 3 3) 'greater)
                    ((< 3 3) 'less)
                    (else 'equal)))
-(define cadr (lambda (a) (car (cdr a))))
 (test 2 (cond ((assv 'b '((a 1) (b 2))) => cadr)
               (else #f)))
 
@@ -193,3 +194,13 @@
             (do ((x x (cdr x))
                  (sum 0 (+ sum (car x))))
                 ((null? x) sum))))
+
+;; map
+(test '(b e h) (map cadr '((a b) (d e) (g h))))
+(test '(5 7 9) (map + '(1 2 3) '(4 5 6)))
+(display (map + '(1 2 3) '(4 5 6)))
+(test '(1 2) (let ((count 0))       ;; (1 2) or (2 1)
+                (map (lambda (ignore)
+                  (set! count (+ count 1))
+                  count)
+                '(a b))))

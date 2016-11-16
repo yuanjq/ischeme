@@ -80,6 +80,7 @@ static inline bool is_closure(Cell *c) { return c && T(c) == CLOSURE; }
 static inline bool is_proc(Cell *c)    { return c && T(c) == PROC; }
 static inline bool is_iproc(Cell *c)   { return c && T(c) == IPROC; }
 static inline bool is_eproc(Cell *c)   { return c && T(c) == EPROC; }
+static inline bool is_procs(Cell *c)   { return c && (T(c) == PROC || T(c) == IPROC || T(c) == EPROC); }
 static inline bool is_envir(Cell *c)   { return c && T(c) == ENVIR; }
 static inline bool is_macro(Cell *c)   { return c && T(c) == MACRO; }
 static inline bool is_promise(Cell *c) { return c && T(c) == PROMISE; }
@@ -818,7 +819,7 @@ static void alist_append(Cell *ctx, Cell *ls, Cell *pair) {
 
 static uint length(Cell *list) {
     uint len = 0;
-    for (; is_pair(list) && !is_nil(list); list = cdr(list)) ++len;
+    for (; is_pair(list); list = cdr(list)) ++len;
     return len;
 }
 
@@ -2286,27 +2287,6 @@ static Cell *_transform_closure_expr(Cell *ctx, Cell *expr, Cell *env) {
     }
     return expr; 
 }
-#if 0
-static Cell *_unbinding_closure_expr(Cell *var, Cell *c) {
-    if (is_pair(var)) {
-        for (Cell *d=var; is_pair(d); d=cdr(d)) {
-            if (is_pair(car(d))) {
-                rplaca(d, _unbinding_closure_expr(car(d), c));
-            } else if (is_closure_expr(car(d)) && equal(closure_expr_expr(car(d)), c)) {
-                rplaca(d, c);
-            }
-            if (is_closure_expr(cdr(d)) && equal(closure_expr_expr(car(d)), c)) {
-                rplacd(d, c);
-                break;
-            }
-        }
-        return var;
-    } else if (is_closure_expr(var)) {
-        return closure_expr_expr(var);
-    }
-    return var;
-}
-#endif
 
 static Cell *syntax_template_expand(Cell *ctx, Cell *expd, Cell *md, Cell *env, Cell *idx) {
     switch (expander_type(expd)) {
@@ -2509,24 +2489,15 @@ Loop:
         }
         break;
     case OP_DEF:
-        if (!is_pair(ctx_code(ctx))) {
-            gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "missing expression after identifier"), NULL, NULL));
-        } 
-        if (is_immutable(car(ctx_code(ctx)))) {
-            gotoErr(ctx, mk_exception(ctx, ValueError, mk_string(ctx, "unable to alter immutable atom"), NULL, NULL));
-        }
-        if (is_pair(c = car(ctx_code(ctx)))) {
-            Cell *e = cdr(ctx_code(ctx));
-            e = cons(ctx, ctx_lambda(ctx), cons(ctx, cdr(c), e));
-            Cell *d = car(c);
-            if (is_pair(d)) {
-                for (; is_pair(d); d = car(d)) {
-                    c = car(d);
-                    e = cons(ctx, ctx_lambda(ctx), cons(ctx, cdr(d), cons(ctx, e, CELL_NIL)));
-                }
+        c = ctx_code(ctx);
+        if (is_pair(d = car(c))) {
+            e = cdr(c);
+            for (; is_pair(d); d = car(d)) {
+                c = car(d);
+                e = cons(ctx, ctx_lambda(ctx), cons(ctx, cdr(d), e));
             }
             ctx_code(ctx) = e;
-        } else if (is_symbol(c = car(ctx_code(ctx)))) {
+        } else if (is_symbol(c = car(c))) {
             ctx_code(ctx) = cadr(ctx_code(ctx));
         } else {
             gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "invalid define expression"), NULL, NULL));
@@ -2534,18 +2505,17 @@ Loop:
         pushOp(ctx, OP_DEF1, CELL_NIL, c);
         gotoOp(ctx, OP_EVAL);
     case OP_DEF1:
-        if (is_proc(ctx_ret(ctx)) && is_nil(proc_name(ctx_code(ctx))))
-            proc_name(ctx_code(ctx)) = ctx_code(ctx);
-        set_env(ctx, ctx_env(ctx), ctx_code(ctx), ctx_ret(ctx));
+        c = ctx_ret(ctx);
+        if (is_proc(c)) {
+            if (is_nil(proc_name(c))) {
+                proc_name(c) = ctx_code(ctx);
+            }
+            mk_env(ctx, closure_env(proc_closure(c)), ctx_code(ctx), c);
+        }
+        set_env(ctx, ctx_env(ctx), ctx_code(ctx), c);
         popOp(ctx, CELL_UNDEF);
     case OP_SET:
         c = car(ctx_code(ctx));
-#if 0
-        if (is_closure_expr(c)) {
-            ctx_env(ctx) = closure_expr_env(c);
-            c = closure_expr_expr(c);
-        }
-#endif
         if (!is_symbol(c)) gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "parameter is not an identifier:"), c, NULL));
         if (is_nil(find_env(c, cdr(ctx_env(ctx))))) {
             gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "unbound variable:"), c, NULL));
@@ -2661,20 +2631,31 @@ Loop:
         } else if (is_eproc(ctx_code(ctx))) {
             popOp(ctx, ctx_code(ctx)->eproc(ctx, ctx_args(ctx)));
         } else if (is_proc(ctx_code(ctx)) || is_closure(ctx_code(ctx))) {
+            char *pname = "lambda";
             if (is_proc(ctx_code(ctx))) {
+                pname = string(proc_name(ctx_code(ctx)));
                 ctx_code(ctx) = proc_closure(ctx_code(ctx));
             }
             Cell *env = closure_env(ctx_code(ctx));
             Cell *fp = closure_args(ctx_code(ctx));
             Cell *ap = ctx_args(ctx);
+
+            int min_args = length(fp);
+            int max_args = is_list(fp) ? min_args : 0xFFFF;
+            int n = length(ap);
+            if (n < min_args) {
+                gotoErr(ctx, mk_exception(ctx, TypeError, mk_string(ctx, "%s: unexpected number of arguments, expected at least %d but %d %s given",
+                                pname, min_args, n, n>1?"were":"was"), NULL, NULL));
+            }
+            if (n > max_args) {
+                gotoErr(ctx, mk_exception(ctx, TypeError, mk_string(ctx, "%s: unexpected number of arguments, expected at most %d but %d %s given",
+                                pname, max_args, n, n>1?"were":"was"), NULL, NULL));
+            }
             for (; is_pair(fp); fp = cdr(fp), ap = cdr(ap)) {
-                if (ap == CELL_NIL) {
-                    gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "too few arguments"), NULL, NULL));
-                }
                 mk_env(ctx, env, car(fp), car(ap));
             }
-            if (fp == CELL_NIL && ap != CELL_NIL) {
-                gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "too much arguments"), NULL, NULL));
+            if (!is_nil(fp) && !is_nil(ap)) {
+                mk_env(ctx, env, fp, ap);
             }
             ctx_code(ctx) = closure_code(ctx_code(ctx));
             ctx_args(ctx) = CELL_NIL;
@@ -3176,6 +3157,74 @@ Loop:
         gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "unquote-splicing: not in quasiquote"), NULL, NULL));
 
 /************* core proc **************/
+    case OP_MAP: {
+        c = car(ctx_args(ctx));
+        d = cdr(ctx_args(ctx));
+        int min_args, max_args;
+        if (is_proc(c)) {
+            min_args = length(closure_args(proc_closure(c)));
+            max_args = is_list(closure_args(proc_closure(c))) ? min_args : 0xFFFF;
+        } else if (is_iproc(c)) {
+            OpCode  *opc = g_opcodes + iproc_op(c);
+            min_args = opc->min_args;
+            max_args = opc->max_args;
+        } else {
+            gotoErr(ctx, mk_exception(ctx, TypeError, mk_string(ctx, "map: upsupport c function"), NULL, NULL));
+        }
+        int n = length(d);
+        if (n < min_args) {
+            gotoErr(ctx, mk_exception(ctx, TypeError, mk_string(ctx, "%s: unexpected number of arguments, expected at least %d but %d %s given",
+                            proc_name(c), min_args, n, n>1?"were":"was"), NULL, NULL));
+        }
+        if (n > max_args) {
+            gotoErr(ctx, mk_exception(ctx, TypeError, mk_string(ctx, "%s: unexpected number of arguments, expected at most %d but %d %s given",
+                            proc_name(c), max_args, n, n>1?"were":"was"), NULL, NULL));
+        }
+        if (is_pair(d)) {
+            n = length(car(d));
+            a = cons(ctx, caar(d), CELL_NIL);
+            if (n > 1) {
+                b = cons(ctx, cdar(d), CELL_NIL);
+            } else {
+                b = CELL_NIL;
+            }
+            if (is_pair(cdr(d))) {
+                for (Cell *ls=cdr(d); is_pair(ls); ls=cdr(ls)) {
+                    e = car(ls);
+                    if (n != length(e)) {
+                        gotoErr(ctx, mk_exception(ctx, ValueError, mk_string(ctx, "map: all lists must have same size"), NULL, NULL));
+                    }
+                    list_add(ctx, a, car(e));
+                    if (n > 1) {
+                        list_add(ctx, b, cdr(e));
+                    }
+                }
+            }
+            e = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
+            pushOpEx(ctx, OP_MAP1, CELL_NIL, b, c, e);
+            gotoOpEx(ctx, OP_APPLY, a, c, CELL_NIL, e);
+        }
+        popOp(ctx, CELL_NIL);
+    }
+    case OP_MAP1:
+        ctx_args(ctx) = cons(ctx, ctx_ret(ctx), ctx_args(ctx));
+        c = ctx_code(ctx);
+        if (is_pair(c)) {
+            int n = length(car(c));
+            d = cons(ctx, caar(c), CELL_NIL);
+            if (n > 1) {
+                e = cons(ctx, cdar(c), CELL_NIL);
+            } else {
+                e = CELL_NIL;
+            }
+            for (Cell *ls=cdr(c); is_pair(ls); ls=cdr(ls)) {
+                list_add(ctx, d, caar(ls));
+                if (n > 1) list_add(ctx, e, cdar(ls));
+            }
+            pushOpEx(ctx, OP_MAP1, ctx_args(ctx), e, ctx_data(ctx), ctx_env(ctx));
+            gotoOpEx(ctx, OP_APPLY, d, ctx_data(ctx), CELL_NIL, ctx_env(ctx));
+        }
+        popOp(ctx, reverse(ctx, ctx_args(ctx)));
     case OP_LOAD:
         c = push_load_file(ctx, string(car(ctx_args(ctx))));
         if (is_exception(c))
@@ -3525,7 +3574,7 @@ static struct {
     {is_pair,       "pair"},
     {is_list,       "list"},
     {is_vector,     "vector"},
-    {is_proc,       "procedure"},    
+    {is_procs,       "procedure"},    
     {is_envir,      "environment"},
     {is_continues,  "continuation"},
     {is_port,       "port"},
@@ -3585,17 +3634,6 @@ static Cell *arg_type_check(Cell *ctx) {
 Err:
     return mk_exception(ctx, SyntaxError, mk_string(ctx, buf), NULL, NULL);
 }
-
-#if 0
-static Cell *isc_repl(Cell *ctx) {
-    Cell *c;
-    ctx_op(ctx) = OP_REPL_LOOP;
-Loop:
-    switch (ctx_op(ctx)) {
-    }
-    return CELL_NIL;
-}
-#endif
 
 static void isc_finalize(Cell *ctx) {
 

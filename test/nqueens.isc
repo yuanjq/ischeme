@@ -1,0 +1,68 @@
+;; eight queens puzzle
+(define (filter predicate seq)
+  (cond ((null? seq) '())
+        ((predicate (car seq))
+         (cons (car seq) (filter predicate (cdr seq))))
+        (else (filter predicate (cdr seq)))))
+; Helper procedures
+(define (accumulate op init seq)
+  (if (null? seq)
+      init
+      (op (car seq)
+        (accumulate op init (cdr seq)))))
+(define (flatmap proc seq)
+  (accumulate append '() (map proc seq)))
+(define (enumerate-interval low high)
+    (if (> low high)
+      '()
+      (cons low (enumerate-interval (+ low 1) high))))
+; Adds a new row to the board (list)
+(define (adjoin-position new-row k rest-of-queens)
+ (cons new-row rest-of-queens))
+
+
+; current queen is at start of positions, check it against rest of the queens
+(define (safe? k positions)
+ ; current queen is at start of positions list 
+ (define queenPos (car positions))
+
+ ; top and bot are used to check for diagonal entries
+ (define (safe-iter top bot remain)
+    (cond ((null? remain)
+        #t)
+        ; Checks for same row and diagonals
+        ((or (= (car remain) queenPos)
+             (= (car remain) top)
+             (= (car remain) bot))
+        #f)
+        (else
+        (safe-iter (- top 1) (+ bot 1) (cdr remain)))))
+    (safe-iter (- queenPos 1) (+ queenPos 1) (cdr positions)))
+ 
+(define empty-board '())
+(define (queens board-size)
+  (define (queen-cols k)
+    (if (= k 0)
+        (list empty-board)
+    (filter
+        (lambda (positions) (safe? k positions))
+            (flatmap
+                (lambda (rest-of-queens)
+                    (map (lambda (new-row)
+                           (adjoin-position new-row k rest-of-queens))
+                         (enumerate-interval 1 board-size)))
+                    (queen-cols (- k 1))))))
+    (queen-cols board-size))
+
+(define (println arg)
+    (display arg)
+    (newline))
+
+(define (display-queens n)
+  (let ((res (queens n)))
+    (display "Total:")
+    (display (length res))
+    (newline)
+    (map println (queens 8))))
+
+(display-queens 8)

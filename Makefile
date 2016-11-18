@@ -8,5 +8,7 @@ test: ischeme
 	@./ischeme test/test.isc
 yinyang: ischeme
 	@./ischeme test/yinyang.isc
+nqueens: ischeme
+	@./ischeme test/nqueens.isc
 clean:
 	rm ischeme

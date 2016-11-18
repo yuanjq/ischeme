@@ -2453,23 +2453,29 @@ Loop:
         }
         if (is_interactive(ctx)) {
             ctx_continue(ctx) = CELL_NIL;
-            write_string(ctx, ctx_outport(ctx), ">> ");
+            if (ctx_file_idx(ctx) == 0) {
+                write_string(ctx, ctx_outport(ctx), ">> ");
+            }
         }
         pushOp(ctx, OP_REPL_LOOP, ctx_args(ctx), ctx_global_env(ctx));
-        pushOp(ctx, OP_REPL_PRINT, ctx_args(ctx), ctx_global_env(ctx));
-        pushOp(ctx, OP_REPL_EVAL, ctx_args(ctx), ctx_global_env(ctx));
         gotoOp(ctx, OP_REPL_READ);
     case OP_REPL_READ:
         c = read_cell(ctx);
         if (c == CELL_EOF) {
-            break;
+            if (ctx_file_idx(ctx) == 0) {
+                break;
+            }
+            pop_load_file(ctx);
+            popOp(ctx, ctx_ret(ctx));
+
         }
         if (is_exception(c)) {
             gotoErr(ctx, c);
         }
-        popOp(ctx, c);
+        ctx_code(ctx) = c;
+        gotoOp(ctx, OP_REPL_EVAL);
     case OP_REPL_EVAL:
-        ctx_code(ctx) = ctx_ret(ctx);
+        pushOp(ctx, OP_REPL_PRINT, CELL_NIL, CELL_NIL);
         gotoOp(ctx, OP_EVAL);
     case OP_REPL_PRINT:
         if (is_interactive(ctx)) {

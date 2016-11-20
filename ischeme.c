@@ -2692,22 +2692,32 @@ Loop:
         gotoOp(ctx, OP_APPLY);
     case OP_AND:
     case OP_OR:
-        /*
+        a = ctx_code(ctx);
+        if (is_nil(a)) {
+            if (OP_AND == op) {
+                popOp(ctx, CELL_TRUE);
+            }
+            popOp(ctx, CELL_FALSE);
+        }
+        pushOp(ctx, OP_ANDOR, mk_long(ctx, op), cdr(a));
+        ctx_code(ctx) = car(a);
+        gotoOp(ctx, OP_EVAL);
+    case OP_ANDOR:
+        a = ctx_ret(ctx);
+        b = ctx_args(ctx);
+        op = number_long(b);
         if (OP_AND == op) {
-            d = CELL_TRUE;
-            e = CELL_FALSE;
+            if (is_false(a)) popOp(ctx, a);
         } else {
-            d = CELL_FALSE;
-            e = CELL_TRUE;
+            if (!is_false(a)) popOp(ctx, a);
         }
-        for (c=ctx_code(ctx); is_pair(c); c=cdr(c)) {
-            d = apply(ctx, OP_EVAL, CELL_NIL, car(c), ctx_env(ctx));
-            if (d == e || (!is_false(d) && !is_false(e))) popOp(ctx, d);
-            if (is_exception(d)) gotoErr(ctx, d);
+        c = ctx_code(ctx);
+        if (is_pair(c)) {
+            pushOp(ctx, OP_ANDOR, ctx_args(ctx), cdr(c));
+            ctx_code(ctx) = car(c);
+            gotoOp(ctx, OP_EVAL);
         }
-        popOp(ctx, d);
-        */
-        break;
+        popOp(ctx, a);
      case OP_IF:
         pushOp(ctx, OP_IF1, CELL_NIL, cdr(ctx_code(ctx)));
         ctx_code(ctx) = car(ctx_code(ctx));
@@ -2742,14 +2752,20 @@ Loop:
         }
         if (is_pair(c)) {
             e = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
-            ctx_ret(ctx) = CELL_FALSE;
-            gotoOpEx(ctx, OP_COND1, CELL_NIL, c, CELL_NIL, e);
+            d = car(c);
+            a = car(d);
+            if (is_symbol(a) && !strcmp(symbol(a), "else")) {
+                gotoOpEx(ctx, OP_EVAL_LIST, CELL_NIL, cdr(d), CELL_NIL, e);
+            }
+            pushOpEx(ctx, OP_COND1, CELL_NIL, cdr(c), cdr(d), e);
+            gotoOpEx(ctx, OP_EVAL, CELL_NIL, a, CELL_NIL, e);
         }
         popOp(ctx, CELL_UNDEF);
     case OP_COND1:
         a = ctx_ret(ctx);
         c = ctx_code(ctx);
         d = ctx_data(ctx);
+        e = ctx_env(ctx);
         if (!is_false(a)) {
             b = car(d);
             if (is_symbol(b) && !strcmp(symbol(b), "=>")) {
@@ -2757,20 +2773,20 @@ Loop:
                 d = cadr(d);
                 if (is_proc(d)) {
                     ctx_ret(ctx) = d;
-                    gotoOpEx(ctx, OP_COND2, CELL_NIL, a, CELL_NIL, ctx_env(ctx));
+                    gotoOpEx(ctx, OP_COND2, CELL_NIL, a, CELL_NIL, e);
                 }
                 pushOp(ctx, OP_COND2, CELL_NIL, a);
-                gotoOpEx(ctx, OP_EVAL, CELL_NIL, d, CELL_NIL, ctx_env(ctx));
+                gotoOpEx(ctx, OP_EVAL, CELL_NIL, d, CELL_NIL, e);
             }
-            gotoOpEx(ctx, OP_EVAL_LIST, CELL_NIL, d, CELL_NIL, ctx_env(ctx));
+            gotoOpEx(ctx, OP_EVAL_LIST, CELL_NIL, d, CELL_NIL, e);
         }
         if (is_pair(c)) {
             d = car(c);
-            pushOpEx(ctx, OP_COND1, CELL_NIL, cdr(c), cdr(d), e);
             a = car(d);
             if (is_symbol(a) && !strcmp(symbol(a), "else")) {
                 gotoOpEx(ctx, OP_EVAL_LIST, CELL_NIL, cdr(d), CELL_NIL, e);
             }
+            pushOpEx(ctx, OP_COND1, CELL_NIL, cdr(c), cdr(d), e);
             gotoOpEx(ctx, OP_EVAL, CELL_NIL, a, CELL_NIL, e);
         }
         popOp(ctx, CELL_UNDEF);
@@ -3310,12 +3326,15 @@ Loop:
         d = ctx_args(ctx);
         uint i=0, len = length(d);
         for (; is_pair(d); d=cdr(d), ++i) {
-            if(i != len-1 && !is_list(car(d))) {
+            e = car(d);
+            if(i != len-1 && !is_list(e)) {
                 char buf[STR_BUF_SIZE] = "";
                 snprintf(buf, STR_BUF_SIZE, "append: unmatched type of argument %d, must be list", i + 1);
                 gotoErr(ctx, mk_exception(ctx, TypeError, mk_string(ctx, buf), NULL, NULL));
             }
-            list_extend(ctx, c, car(d));
+            if (!is_nil(e)) {
+                list_extend(ctx, c, e);
+            }
         }
         popOp(ctx, cdr(c));
     case OP_REVERSE:

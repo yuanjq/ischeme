@@ -1,7 +1,15 @@
 ;; eight queens puzzle
 (define (filter predicate seq)
+    ;(display "@<")
+    ;(display seq)
+    ;(display ">")
+    ;(newline)
+    ;(display "@filter:(");test
+    ;(display "<") (display predicate) (display ">");test
+    ;(display ")");test
   (cond ((null? seq) '())
         ((predicate (car seq))
+        ;(display "<") (display predicate) (display ">");test
          (cons (car seq) (filter predicate (cdr seq))))
         (else (filter predicate (cdr seq)))))
 ; Helper procedures
@@ -19,7 +27,6 @@
 ; Adds a new row to the board (list)
 (define (adjoin-position new-row k rest-of-queens)
  (cons new-row rest-of-queens))
-
 
 ; current queen is at start of positions, check it against rest of the queens
 (define (safe? k positions)
@@ -63,6 +70,6 @@
     (display "Total:")
     (display (length res))
     (newline)
-    (map println (queens 8))))
+    (map println res)))
 
-(display-queens 8)
+(display-queens 7)

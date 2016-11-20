@@ -1,5 +1,5 @@
 .PHONY: ischeme test clean
-CFLAGS += --std=c99
+CFLAGS += -O2 --std=c99
 LDFLAGS += -lm
 
 ischeme: ischeme.c compiler.c vm.c gc.c

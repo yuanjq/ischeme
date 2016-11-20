@@ -33,6 +33,7 @@ _OPCODE("case",                           SYNTAX,     OP_CASE,                  
 _OPCODE(NULL,                             0,          OP_CASE1,                     0,  0,  0)
 _OPCODE("and",                            SYNTAX,     OP_AND,                     0,  0xFFFF,  0)
 _OPCODE("or",                             SYNTAX,     OP_OR,                      0,  0xFFFF,  0)
+_OPCODE(NULL,                             0,          OP_ANDOR,                     0,  0,  0)
 _OPCODE("begin",                          SYNTAX,     OP_BEGIN,                   0,  0xFFFF,  0)
 _OPCODE("define-syntax",                  SYNTAX,     OP_DEF_SYNTAX,             2,  2,  0)
 _OPCODE(NULL,                             0,          OP_DEF_SYNTAX1,             0,  0,  0)

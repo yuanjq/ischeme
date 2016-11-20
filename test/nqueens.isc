@@ -1,15 +1,9 @@
+#!/usr/bin/env ischeme
+
 ;; eight queens puzzle
 (define (filter predicate seq)
-    ;(display "@<")
-    ;(display seq)
-    ;(display ">")
-    ;(newline)
-    ;(display "@filter:(");test
-    ;(display "<") (display predicate) (display ">");test
-    ;(display ")");test
   (cond ((null? seq) '())
         ((predicate (car seq))
-        ;(display "<") (display predicate) (display ">");test
          (cons (car seq) (filter predicate (cdr seq))))
         (else (filter predicate (cdr seq)))))
 ; Helper procedures

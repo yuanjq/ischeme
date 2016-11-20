@@ -1,3 +1,5 @@
+#!/usr/bin/env ischeme
+
 ;; yin-yang pazzle test
 (let* ((yin
          ((lambda (cc) (display #\@) cc) (call-with-current-continuation (lambda (c) c))))

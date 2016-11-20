@@ -1,3 +1,5 @@
+#!/usr/bin/env ischeme
+
 (define-syntax test
   (syntax-rules ()
     ((test expect expr)

@@ -56,7 +56,7 @@ _OPCODE("delay",                          SYNTAX,     OP_DELAY,                 
 _OPCODE("map",                            IPROC,      OP_MAP,                     2,  0xFFFF,  T_PROC T_LIST)
 _OPCODE(NULL,                             0,          OP_MAP1,             0,  0,  0)
 _OPCODE("for-each",                       IPROC,      OP_FOREACH,                 0,  0,  0)
-_OPCODE("eval",                           IPROC,      OP_PEVAL,                   0,  0,  0)
+_OPCODE("eval",                           IPROC,      OP_PEVAL,                   1,  2,  0)
 _OPCODE("apply",                          IPROC,      OP_PAPPLY,                  0,  0,  0)
 _OPCODE("force",                          IPROC,      OP_FORCE,                   0,  0,  0)
 _OPCODE("call-with-current-continuation", IPROC,      OP_CALLCC,                 1,  1,  T_PROC)

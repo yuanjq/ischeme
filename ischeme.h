@@ -4,13 +4,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
+#include <string>
 
-//#define IDEBUG_MORE
+#define IDEBUG_MORE
 
 #ifdef  IDEBUG_MORE
-#define IMessage(fmt, ...)  printf("*Message*: "fmt"\n", ##__VA_ARGS__)
-#define IWarning(fmt, ...)  printf("*Warning*: "fmt"\n", ##__VA_ARGS__)
-#define IError(fmt, ...)    printf("*Error*: "fmt"\n", ##__VA_ARGS__)
+#define IMessage(fmt, ...)  printf("*Message*: " fmt "\n", ##__VA_ARGS__)
+#define IWarning(fmt, ...)  printf("*Warning*: " fmt "\n", ##__VA_ARGS__)
+#define IError(fmt, ...)    printf("*Error*: " fmt "\n", ##__VA_ARGS__)
 #define ITraceEnter()       IMessage("Func %s enter.", __FUNCTION__)
 #define ITraceLeave()       IMessage("Func %s leave.", __FUNCTION__)
 #else
@@ -21,45 +22,8 @@
 #define ITraceLeave()
 #endif
 
-typedef unsigned char       bool;
 typedef unsigned char       uchar;
 typedef unsigned int        uint;
-
-typedef unsigned char       Char;
-typedef unsigned char       Boolean;
-typedef struct _String      String;
-typedef struct _String      Symbol;
-typedef struct _Number      Number;
-typedef struct _Pair        Pair;
-typedef struct _Vector      Vector;
-typedef struct _Port        Port;
-typedef struct _Continue    Continue;
-typedef struct _Closure     Closure;
-typedef struct _Proc        Proc;
-typedef struct _ClosureExpr ClosureExpr;
-typedef struct _Exception   Exception;
-typedef struct _Cell        Cell;
-typedef struct _OpCode      OpCode;
-typedef struct _SegFreeList SegFreeList;
-typedef struct _Segment     Segment;
-typedef struct _Context     Context;
-typedef struct _Matcher     Matcher;
-typedef struct _Expander    Expander;
-typedef struct _Macro       Macro;
-
-typedef enum _Op            Op;
-typedef enum _Radix         Radix;
-typedef enum _Exactness     Exactness;
-typedef enum _NumberType    NumberType;
-typedef enum _PortType      PortType;
-typedef enum _Token         Token;
-typedef enum _Type          Type;
-typedef enum _Error         Error;
-typedef enum _MatcherType   MatcherType;
-typedef enum _ExpanderType  ExpanderType;
-
-typedef Cell*(*Reader)(Cell*, int);
-typedef Cell*(*EProc)(Cell*, Cell*);
 
 #define TRUE                    1
 #define FALSE                   0
@@ -77,6 +41,7 @@ typedef Cell*(*EProc)(Cell*, Cell*);
 
 
 #define S(t)                    sizeof(t)
+#define CSTR(s)                 const_cast<char*>(s)
 #define cell_align(n, bits)     (((n)+(1<<(bits))-1)&(((uint)-1)-((1<<(bits))-1)))
 #define segment_align(n)        cell_align(n, 4)
 #define segment_align_size(s)   (S(Segment) + (s) + segment_align(1))
@@ -85,7 +50,7 @@ typedef Cell*(*EProc)(Cell*, Cell*);
 #define cell_free               free
 #define cell_field(c,t,f)       ((c)->t.f)
 #define cell_sizeof(x)          (offsetof(Cell, chr) + S(((Cell*)0)->x))
-#define cell_new(_c,_x,_t)      ({ Cell *c = cell_alloc(_c, cell_sizeof(_x));\
+#define cell_new(_c,_x,_t)      ({ Cell *c = (Cell*)cell_alloc(_c, cell_sizeof(_x));\
                                    if (c) c->t = _t; c;})
 
 #define syntax_new(c)           cell_new(c, op, SYNTAX)
@@ -196,7 +161,7 @@ typedef Cell*(*EProc)(Cell*, Cell*);
 #define ctx_unquote_splicing(c) (cell_field(c,ctx,uquotes))
 #define ctx_syntax_expr(c)      (cell_field(c,ctx,synepr))
 
-enum _Type {
+enum Type {
     FREE = 0,
     CHAR,
     BOOLEAN,
@@ -224,7 +189,7 @@ enum _Type {
     EXCEPTION,
 };
 
-enum _Token {
+enum Token {
     TOK_ERR = -2,
     TOK_EOF = -1,
     TOK_SYMBOL,
@@ -246,7 +211,7 @@ enum _Token {
     TOK_MAX
 };
 
-enum _PortType {
+enum PortType {
     PORT_FREE   = 0,
     PORT_INPUT  = 1<<1,
     PORT_OUTPUT = 1<<2,
@@ -256,20 +221,20 @@ enum _PortType {
     PORT_EOF    = 1<<6,
 };
 
-enum _NumberType {
+enum NumberType {
     NUMBER_LONG,
     NUMBER_DOUBLE,
     NUMBER_FRACTION,
     NUMBER_COMPLEX,
 };
 
-enum _Exactness {
+enum Exactness {
     NO_EXACTNESS,
     INEXACT,
     EXACT
 };
 
-enum _Radix {
+enum Radix {
     NO_RADIX = 0,
     BIN = 2,
     OCT = 8,
@@ -277,14 +242,14 @@ enum _Radix {
     HEX = 16
 };
 
-enum _Op {
+enum Op {
     #define _OPCODE(n, t1, o, m1, m2, t2) o,
     #include "opcodes.h"
     #undef _OPCODE
     OPCODE_MAX
 };
 
-enum _Error {
+enum ErrorType {
     SyntaxError,
     MemoryError,
     IndexError,
@@ -295,7 +260,7 @@ enum _Error {
     ArithmeticError,
 };
 
-enum _MatcherType {
+enum MatcherType {
     MatcherLiteral,
     MatcherConstant,
     MatcherVariable,
@@ -304,18 +269,22 @@ enum _MatcherType {
     MatcherSequence,
 };
 
-enum _ExpanderType {
+enum ExpanderType {
     ExpanderConstant,
     ExpanderVariable,
     ExpanderSequence,
 };
 
-struct _String {
+struct Cell;
+typedef Cell*(*Reader)(Cell*, int);
+typedef Cell*(*EProc)(Cell*, Cell*);
+
+struct String {
     uint size;
     char data[];
 };
 
-struct _Number {
+struct Number {
     uchar t;
     union {
         long l;
@@ -331,7 +300,7 @@ struct _Number {
     };
 };
 
-struct _Port {
+struct Port {
     uint t;
     union {
         struct {
@@ -347,7 +316,7 @@ struct _Port {
     };
 };
 
-struct _Continue {
+struct Continue {
     Op op;
     Cell *args;
     Cell *env;
@@ -355,17 +324,17 @@ struct _Continue {
     Cell *data;
 };
 
-struct _Pair {
+struct Pair {
     Cell *a;
     Cell *d;
 };
 
-struct _Vector {
+struct Vector {
     uint length;
     Cell *data[];
 };
 
-struct _Closure {
+struct Closure {
     Cell *name;
     Cell *args;
     Cell *code;
@@ -373,36 +342,36 @@ struct _Closure {
     Cell *env;
 };
 
-struct _ClosureExpr {
+struct ClosureExpr {
     Cell *expr;
     Cell *env;
 };
 
-struct _Proc {
+struct Proc {
     Cell *name;
     Cell *clos;
 };
 
-struct _Exception {
-    Error t;
+struct Exception {
+    ErrorType t;
     Cell *msg;
     Cell *trg;
     Cell *src;
 };
 
-struct _SegFreeList {
+struct SegFreeList {
   uint size;
   SegFreeList *next;
 };
 
-struct _Segment {
+struct Segment {
   uint size, max_size;
   SegFreeList *free_list;
   Segment *next;
   char *data;
 };
 
-struct _Context {
+struct Context {
     Segment *segments;
     Cell *global_env;
     Cell *symbols;
@@ -427,31 +396,31 @@ struct _Context {
     Cell *synepr;
 };
 
-struct _Matcher {
+struct Matcher {
     MatcherType t;
     bool rept;
     Cell *name;
     Cell *value;
 };
 
-struct _Expander {
+struct Expander {
     ExpanderType t;
     uint n;
     Cell *name;
     Cell *value;
 };
 
-struct _Macro {
+struct Macro {
     Cell *mchs;
     Cell *env;
 };
 
-struct _Cell {
+struct Cell {
     uint t;
     union {
-        int         op;
-        Char        chr;
-        Boolean     bl;
+        Op          op;
+        uchar       chr;
+        bool        bl;
         String      str;
         Number      num;
         Pair        pair;
@@ -470,12 +439,12 @@ struct _Cell {
     };
 };
 
-struct _OpCode {
-    char *name;
+struct OpCode {
+    const char *name;
     unsigned char t;
     int min_args;
     int max_args;
-    unsigned char *arg_types;
+    const char *arg_types;
 };
 
 #define T_ANY       "\001"

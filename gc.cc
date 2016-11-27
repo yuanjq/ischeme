@@ -16,7 +16,7 @@ Segment *cell_mk_segment(int size, int max_size) {
     Segment *seg;
     SegFreeList *list, *next;
 
-    seg = cell_malloc(segment_align_size(size));
+    seg = (Segment *)cell_malloc(segment_align_size(size));
     if (!seg) return NULL;
     seg->size = size;
     seg->max_size = max_size;

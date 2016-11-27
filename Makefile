@@ -1,14 +1,20 @@
-.PHONY: ischeme test clean
-CFLAGS += -O2 --std=c99
+CXX = g++
+CXXFLAGS += -std=c++11
 LDFLAGS += -lm
 
 TARGET = ischeme
 INSTALL_DIR = /usr/bin
-SRC = ischeme.c compiler.c vm.c gc.c
+SRC = $(wildcard *.cc)
+OBJ_DIR = obj
+OBJ = $(SRC:%.cc=$(OBJ_DIR)/%.o)
 
+.PHONY: all test clean
 
-$(TARGET): $(SRC)
-	cc -o $@ $^ $(CFLAGS) $(LDFLAGS)
+$(TARGET): $(OBJ)
+	$(CXX) -o $@ $^ $(LDFLAGS)
+$(OBJ): $(OBJ_DIR)/%.o : %.cc
+	@mkdir -p $(OBJ_DIR)
+	$(CXX) -c $< -o $@ $(CXXFLAGS)
 test: $(TARGET)
 	@./$(TARGET) test/test.isc
 yinyang: $(TARGET)
@@ -16,6 +22,6 @@ yinyang: $(TARGET)
 nqueens: $(TARGET)
 	@./$(TARGET) test/nqueens.isc
 clean:
-	rm $(TARGET)
+	-rm $(TARGET) $(OBJ_DIR) -rf
 install: $(TARGET)
 	cp -f $(TARGET) $(INSTALL_DIR)

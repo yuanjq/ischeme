@@ -43,8 +43,12 @@ typedef unsigned long       ulong;
 
 #define S(t)                    sizeof(t)
 #define CSTR(s)                 const_cast<char*>(s)
-#define cell_align(n, bits)     (((n)+(1<<(bits))-1)&(((uint)-1)-((1<<(bits))-1)))
+#define cell_align(n, bits)     (((n)+(1<<(bits))-1)&(((ulong)-1)-((1<<(bits))-1)))
+#ifdef __x86_64__
+#define segment_align(n)        cell_align(n, 8)
+#else
 #define segment_align(n)        cell_align(n, 4)
+#endif
 #define segment_align_size(s)   (S(Segment) + (s) + segment_align(1))
 
 #define cell_malloc             malloc

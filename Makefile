@@ -17,6 +17,7 @@ $(OBJ): $(OBJ_DIR)/%.o : %.cc
 	@mkdir -p $(OBJ_DIR)
 	$(CXX) -c $< -o $@ $(CXXFLAGS)
 $(DEP): $(OBJ_DIR)/%.d : %.cc
+	@mkdir -p $(OBJ_DIR); \
 	$(CXX) -MM $(CXXFLAGS) $< > $@.$$$$; \
 	sed 's,\($*\)\.o[ :]*,\$(OBJ_DIR)/$*.o $@ : ,g' < $@.$$$$ > $@; \
 	rm -f $@.$$$$

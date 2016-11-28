@@ -20,7 +20,7 @@ Segment *cell_mk_segment(int size, int max_size) {
     if (!seg) return NULL;
     seg->size = size;
     seg->max_size = max_size;
-    seg->data = (char*) segment_align(S(seg->data) + (uint)&(seg->data));
+    seg->data = (char*) segment_align(S(seg->data) + (ulong)&(seg->data));
     list = seg->free_list = (SegFreeList*) seg->data;
     seg->next = NULL;
     next = (SegFreeList*) ((char*)list + segment_align(S(SegFreeList)));

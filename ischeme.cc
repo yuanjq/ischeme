@@ -5,6 +5,7 @@
 #include <math.h>
 #include <unistd.h>
 #include "ischeme.h"
+#include "cell.h"
 
 //#define MACRO_DEBUG
 
@@ -87,8 +88,8 @@ static inline bool is_promise(Cell *c) { return c && T(c) == PROMISE; }
 static inline bool is_port(Cell *c)    { return c && T(c) == PORT; }
 static inline bool is_inport(Cell *c)  { return is_port(c) && port_type(c) & PORT_INPUT; }
 static inline bool is_outport(Cell *c) { return is_port(c) && port_type(c) & PORT_OUTPUT; }
+static inline bool is_instruct(Cell *c) { return c && T(c) == INSTRUCT; }
 static inline bool is_continue(Cell *c) { return c && T(c) == CONTINUE; }
-static inline bool is_continues(Cell *c) { return c && T(c) == CONTINUES; }
 static inline bool is_exception(Cell *c) { return c && T(c) == EXCEPTION; }
 static inline bool is_port_eof(Cell *c) { return c && T(c) == PORT && ((port_type(c) & PORT_FILE) && feof(port_file(c)) || (port_type(c) & PORT_STRING) && port_string_pos(c) == port_string_end(c)); }
 static inline bool is_immutable(Cell *c) { return c && cell_type(c) & M_IMMUTABLE; }
@@ -171,7 +172,7 @@ static Cell *mk_string(Cell *ctx, const char *fmt, ...) {
     if (c) {
         cell_type(c) = STRING;
         string_size(c) = size;
-
+        string_data(c) = (char*)(&string_data(c) + 1);
         va_start(ap, fmt);
         size = vsnprintf(string_data(c), size, fmt, ap);
         va_end(ap);
@@ -245,7 +246,7 @@ static Cell *mk_macro(Cell *ctx, Cell *mchs, Cell *env) {
     return c;
 }
 
-static Cell *mk_port(Cell *ctx, FILE *f, char *name, int t) {
+static Cell *mk_port(Cell *ctx, FILE *f, const char *name, int t) {
     Cell *c = port_new(ctx);
     if (c) {
         port_type(c) = t;
@@ -276,9 +277,9 @@ static Cell *mk_syntax(Cell *ctx, int op) {
     return c;
 }
 
-static Cell *mk_continues(Cell *ctx, Cell *c) {
+static Cell *mk_continue(Cell *ctx, Cell *c) {
     c = cons(ctx, c, ctx_continue(ctx));
-    if (c) cell_type(c) = CONTINUES;
+    if (c) cell_type(c) = CONTINUE;
     return c;
 }
 
@@ -290,6 +291,7 @@ static Cell *mk_exception(Cell *ctx, ErrorType t, Cell *msg, Cell *trg, Cell *sr
         exception_trg(c) = trg;
         exception_src(c) = src;
     }
+    return c;
 }
 
 /********************* stack frame ********************/
@@ -310,30 +312,30 @@ static void print_err(Cell *ctx, char *etype, char *ebody, ...) {
 }
 
 static inline bool pop_op(Cell *ctx, Cell *v) {
-    Cell *conts = ctx_continue(ctx);
-    Cell *cont = continues_car(conts);
-    if (!is_continue(cont)) {
+    Cell *cont = ctx_continue(ctx);
+    Cell *inst = continue_car(cont);
+    if (!is_instruct(inst)) {
         return FALSE;
     }
     ctx_ret(ctx) = v;
-    ctx_op(ctx) = continue_op(cont);
-    ctx_args(ctx) = continue_args(cont);
-    ctx_code(ctx) = continue_code(cont);
-    ctx_data(ctx) = continue_data(cont);
-    ctx_env(ctx) = continue_env(cont);
-    ctx_continue(ctx) = continues_cdr(conts);
+    ctx_op(ctx) = instruct_op(inst);
+    ctx_args(ctx) = instruct_args(inst);
+    ctx_code(ctx) = instruct_code(inst);
+    ctx_data(ctx) = instruct_data(inst);
+    ctx_env(ctx) = instruct_env(inst);
+    ctx_continue(ctx) = continue_cdr(cont);
     return TRUE;
 }
 
 static void push_op(Cell *ctx, Op op, Cell *args, Cell *code, Cell *data, Cell *env) {
-    Cell *c = continue_new(ctx);
+    Cell *c = instruct_new(ctx);
     if (c) {
-        continue_op(c) = op;
-        continue_args(c) = args;
-        continue_code(c) = code;
-        continue_data(c) = data;
-        continue_env(c) = env;
-        ctx_continue(ctx) = mk_continues(ctx, c);
+        instruct_op(c) = op;
+        instruct_args(c) = args;
+        instruct_code(c) = code;
+        instruct_data(c) = data;
+        instruct_env(c) = env;
+        ctx_continue(ctx) = mk_continue(ctx, c);
     }
 }
 
@@ -1032,7 +1034,7 @@ static void write_cell(Cell *ctx, Cell *port, Cell *c, bool readable, bool more,
         } else {
 		    snprintf(s, STR_BUF_SIZE, "#<PROCEDURE:%p>", c);
         }
-	} else if (is_continues(c)) {
+	} else if (is_continue(c)) {
 		snprintf(s, STR_BUF_SIZE, "#<CONTINUATION:%p>", c);
 	} else if (is_number(c)) {
         write_number(ctx, port, c, s);
@@ -2460,7 +2462,7 @@ Loop:
     case OP_REPL_LOOP:
         if (is_port_eof(ctx_inport(ctx))) {
             if (ctx_file_idx(ctx) == 0) {
-                break;
+                return ctx_ret(ctx);
             }
             pop_load_file(ctx);
             popOp(ctx, ctx_ret(ctx));
@@ -2477,7 +2479,7 @@ Loop:
         c = read_cell(ctx);
         if (c == CELL_EOF) {
             if (ctx_file_idx(ctx) == 0) {
-                break;
+                return ctx_ret(ctx);
             }
             pop_load_file(ctx);
             popOp(ctx, ctx_ret(ctx));
@@ -2507,7 +2509,7 @@ Loop:
             ctx_args(ctx) = CELL_NIL;
             gotoOp(ctx, OP_REPL_LOOP);
         }
-        break;
+        return ctx_ret(ctx);
     case OP_DEF:
         c = ctx_code(ctx);
         if (is_pair(d = car(c))) {
@@ -2681,8 +2683,8 @@ Loop:
             ctx_args(ctx) = CELL_NIL;
             ctx_env(ctx) = env;
             gotoOp(ctx, OP_EVAL_LIST);
-        } else if (is_continues(ctx_code(ctx))) {
-            ctx_continue(ctx) = cons(ctx, continues_car(ctx_code(ctx)), continues_cdr(ctx_code(ctx)));            
+        } else if (is_continue(ctx_code(ctx))) {
+            ctx_continue(ctx) = cons(ctx, continue_car(ctx_code(ctx)), continue_cdr(ctx_code(ctx)));            
             popOp(ctx, ctx_args(ctx) != CELL_NIL ? car(ctx_args(ctx)) : CELL_NIL);
         }
         gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "illegal procedure: "), ctx_code(ctx), NULL));
@@ -3262,11 +3264,29 @@ Loop:
         }
         popOp(ctx, reverse(ctx, ctx_args(ctx)));
     case OP_PEVAL:
-        // TODO
-        break;
+        c = car(ctx_args(ctx));
+        gotoOpEx(ctx, OP_EVAL, CELL_NIL, c, CELL_NIL, ctx_env(ctx));
     case OP_PAPPLY:
-        // TODO
-        break;
+        c = car(ctx_args(ctx));
+        d = cdr(ctx_args(ctx));
+        if (is_nil(cdr(d))) {
+            if (!is_pair(car(d))) {
+                gotoErr(ctx, mk_exception(ctx, TypeError, mk_string(ctx, "invalid arguments"), NULL, NULL));
+            }
+            gotoOpEx(ctx, OP_APPLY, car(d), c, CELL_NIL, ctx_env(ctx));
+        }
+        a = b = cons(ctx, CELL_NIL, CELL_NIL);
+        for (e=d; is_pair(e); e=cdr(e)) {
+            if (is_nil(cdr(e))) {
+                if (!is_pair(car(e))) {
+                    gotoErr(ctx, mk_exception(ctx, TypeError, mk_string(ctx, "invalid arguments"), NULL, NULL));
+                }
+                list_extend(ctx, a, car(e));
+                break;
+            }
+            a = rplacd(a, cons(ctx, car(e), CELL_NIL));
+        }
+        gotoOpEx(ctx, OP_APPLY, cdr(b), c, CELL_NIL, ctx_env(ctx));
     case OP_LOAD:
         c = push_load_file(ctx, string(car(ctx_args(ctx))));
         if (is_exception(c))
@@ -3565,46 +3585,10 @@ static void init_readers() {
     g_readers[TOK_VECTOR]   = read_vector;
 }
 
-static Cell *isc_init(PortType pt, FILE *in, char *str) {
-    Segment *seg;
-    Cell dummy_ctx, *ctx = NULL;
-
-    seg = cell_mk_segment(SEG_INIT_MEM_SIZE, 0);
-    if (!seg) {
-        IError("no memory");
-        return NULL;
-    }
-    dummy_ctx.t = CONTEXT;
-    ctx_segments(&dummy_ctx) = seg;
-    ctx = context_new(&dummy_ctx);
-    ctx_segments(ctx) = seg;
-
-    init_readers();
-    if (pt & PORT_STRING) {
-        ctx_inport(ctx) = mk_port(ctx, str, str + strlen(str), pt | PORT_INPUT);
-    } else {
-        ctx_inport(ctx) = mk_port(ctx, in, str, pt | PORT_INPUT);
-    }
+static Cell *isc_init(PortType pt, FILE *in, char *src) {
+    Cell *ctx = ischeme_ctx_new();
+    ctx_inport(ctx) = ischeme_port_new(ctx, pt, src);
     ctx_load_file(ctx, 0) = ctx_inport(ctx);
-    ctx_outport(ctx) = mk_port(ctx, stdout, NULL, PORT_FILE | PORT_OUTPUT);
-    ctx_lambda(ctx) = internal(ctx, "lambda");
-    ctx_quote(ctx) = internal(ctx, "quote");
-    ctx_unquote(ctx) = internal(ctx, "unquote");
-    ctx_quasiquote(ctx) = internal(ctx, "quasiquote");
-    ctx_unquote_splicing(ctx) = internal(ctx, "unquote-splicing");
-    ctx_global_env(ctx) = cons(ctx, internal(ctx, "*global-envir*"), CELL_NIL);
-    ctx_env(ctx) = ctx_global_env(ctx);
-        
-    Cell *c = CELL_NIL;
-    for (int i = 0; i < sizeof(g_opcodes)/sizeof(OpCode); i++) {
-        if (g_opcodes[i].name) {
-            if (g_opcodes[i].t == SYNTAX) c = mk_syntax(ctx, i);
-            else c = mk_iproc(ctx, i);
-            mk_env(ctx, ctx_global_env(ctx), internal(ctx, g_opcodes[i].name), c);
-        }
-    }
-    mk_env(ctx, ctx_global_env(ctx), internal(ctx, "call/cc"),
-        cdr(find_env(internal(ctx, g_opcodes[OP_CALLCC].name), cdr(ctx_global_env(ctx)))));
     return ctx;
 }
 
@@ -3625,7 +3609,7 @@ static struct {
     {is_vector,     "vector"},
     {is_procs,       "procedure"},    
     {is_envir,      "environment"},
-    {is_continues,  "continuation"},
+    {is_continue,   "continuation"},
     {is_port,       "port"},
     {is_inport,     "input port"},
     {is_outport,    "output port"},
@@ -3747,3 +3731,101 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
+/**************** ffi ****************/
+void ischeme_init() {
+}
+
+Cell *ischeme_ctx_new() {
+    Segment *seg;
+    Cell dummy_ctx, *ctx = NULL;
+
+    seg = cell_mk_segment(SEG_INIT_MEM_SIZE, 0);
+    if (!seg) {
+        IError("no memory");
+        return NULL;
+    }
+    dummy_ctx.t = CONTEXT;
+    ctx_segments(&dummy_ctx) = seg;
+    ctx = context_new(&dummy_ctx);
+    ctx_segments(ctx) = seg;
+
+    init_readers();
+    ctx_inport(ctx) = NULL;
+    ctx_load_file(ctx, 0) = NULL;
+    ctx_outport(ctx) = mk_port(ctx, stdout, NULL, PORT_FILE | PORT_OUTPUT);
+    ctx_lambda(ctx) = internal(ctx, "lambda");
+    ctx_quote(ctx) = internal(ctx, "quote");
+    ctx_unquote(ctx) = internal(ctx, "unquote");
+    ctx_quasiquote(ctx) = internal(ctx, "quasiquote");
+    ctx_unquote_splicing(ctx) = internal(ctx, "unquote-splicing");
+    ctx_global_env(ctx) = cons(ctx, internal(ctx, "*global-envir*"), CELL_NIL);
+    ctx_env(ctx) = ctx_global_env(ctx);
+        
+    Cell *c = CELL_NIL;
+    for (int i = 0; i < sizeof(g_opcodes)/sizeof(OpCode); i++) {
+        if (g_opcodes[i].name) {
+            if (g_opcodes[i].t == SYNTAX) c = mk_syntax(ctx, i);
+            else c = mk_iproc(ctx, i);
+            mk_env(ctx, ctx_global_env(ctx), internal(ctx, g_opcodes[i].name), c);
+        }
+    }
+    mk_env(ctx, ctx_global_env(ctx), internal(ctx, "call/cc"),
+        cdr(find_env(internal(ctx, g_opcodes[OP_CALLCC].name), cdr(ctx_global_env(ctx)))));
+    return ctx;
+}
+
+Cell *ischeme_port_new(Cell *ctx, PortType pt, const char *src) {
+    Cell *port = NULL;
+    if (pt & PORT_STRING) {
+        port = mk_port(ctx, const_cast<char*>(src), const_cast<char*>(src) + strlen(src), pt);
+    } else if (pt & PORT_FILE) {
+        if (!access(src, F_OK | R_OK)) {
+            FILE *in = fopen(src, "r");
+            if (!in) {
+                IError("cant't open file '%s'", src);
+                return NULL;
+            }
+            port = mk_port(ctx, in, src, pt);
+        }
+    }
+    return port; 
+}
+
+Cell *ischeme_eval(Cell *ctx, Cell *port) {
+    if (!ctx || !port || !(port_type(port) & PORT_INPUT)) {
+        IError("invalid parameters");
+        return NULL;
+    }
+    ctx_inport(ctx) = port;
+    ctx_load_file(ctx, 0) = ctx_inport(ctx);
+    return isc_repl(ctx);
+}
+
+Cell *ischeme_eval_string(Cell *ctx, const char *expr) {
+    if (!ctx || !expr) {
+        IError("invalid parameters");
+        return NULL;
+    }
+    Cell *port = ischeme_port_new(ctx, PORT_INPUT_STRING, expr);
+    return ischeme_eval(ctx, port);
+}
+
+Cell *ischeme_eval_file(Cell *ctx, const char *file) {
+    if (!ctx || !file) {
+        IError("invalid parameters");
+        return NULL;
+    }
+    Cell *port = ischeme_port_new(ctx, PORT_INPUT_FILE, file);
+    return ischeme_eval(ctx, port);
+}
+void ischeme_print(Cell *ctx, Cell *c) {
+    print_cell(ctx, ctx_outport(ctx), c);
+}
+
+void ischeme_print_to(Cell *ctx, Cell *c, Cell *port) {
+    print_cell(ctx, port, c);
+}
+
+void ischeme_free(Cell *c) {
+    // TODO:free
+}

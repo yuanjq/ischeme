@@ -1,5 +1,5 @@
 #include <string.h>
-#include "ischeme.h"
+#include "cell.h"
 
 #define SEGMENT_GROW_THRESHOLD      0.75
 #define SEGMENT_GROW_RATIO          1.5

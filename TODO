@@ -48,6 +48,16 @@ iScheme TODO LIST
 ** DONE define-syntax
    - State "DONE"       [2016/10/13 16:21]
 
-* GC
 * FFI
-* Modules
+** DONE call from c/c++ througth c api
+   - State "DONE"       [2016/12/03]
+** DONE call c function
+   - State "TODO"
+
+* Library
+** DONE define-library
+   - State "TODO"
+** DONE import
+   - State "TODO"
+
+* GC

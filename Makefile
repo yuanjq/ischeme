@@ -1,18 +1,22 @@
 CXX = g++
-CXXFLAGS += -std=c++11
+CXXFLAGS += -std=c++11 -O2
 LDFLAGS += -lm
 
 TARGET = ischeme
-INSTALL_DIR = /usr/bin
+TARGET_HEADER = ischeme.h
+TARGET_SO = libischeme.so
+INSTALL_DIR = /usr/local
 SRC = $(wildcard *.cc)
-OBJ_DIR = obj
+OBJ_DIR = .obj
 OBJ = $(SRC:%.cc=$(OBJ_DIR)/%.o)
 DEP = $(SRC:%.cc=$(OBJ_DIR)/%.d)
 
-.PHONY: all clean
-
+.PHONY: all clean install
+all: $(TARGET) $(TARGET_SO)
 $(TARGET): $(OBJ)
 	$(CXX) -o $@ $^ $(LDFLAGS)
+$(TARGET_SO): $(OBJ)
+	$(CXX) -fPIC -shared -o $@ $^ $(LDFLAGS)
 $(OBJ): $(OBJ_DIR)/%.o : %.cc
 	@mkdir -p $(OBJ_DIR)
 	$(CXX) -c $< -o $@ $(CXXFLAGS)
@@ -29,6 +33,8 @@ yinyang: $(TARGET)
 nqueens: $(TARGET)
 	@./$(TARGET) test/nqueens.isc
 clean:
-	-rm $(TARGET) $(OBJ_DIR) -rf
-install: $(TARGET)
-	cp -f $(TARGET) $(INSTALL_DIR)
+	-rm $(TARGET) $(TARGET_SO) $(OBJ_DIR) -rf
+install:
+	cp -f $(TARGET) $(INSTALL_DIR)/bin
+	cp -f $(TARGET_HEADER) $(INSTALL_DIR)/include
+	cp -f $(TARGET_SO) $(INSTALL_DIR)/lib

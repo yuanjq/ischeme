@@ -44,8 +44,8 @@ static const char *ascii32[32]={
 };
 
 static Reader g_readers[TOK_MAX];
-static Cell g_true = {t:BOOLEAN, {bl:TRUE}};
-static Cell g_false = {t:BOOLEAN, {bl:FALSE}};
+static Cell g_true = {t:BOOLEAN, ptrtag:POINTER_TAG, {bl:TRUE}};
+static Cell g_false = {t:BOOLEAN, ptrtag:POINTER_TAG, {bl:FALSE}};
 static Cell g_nil;
 static Cell g_eof;
 static Cell g_undef;
@@ -3585,8 +3585,16 @@ static void init_readers() {
 }
 
 static Cell *isc_init(PortType pt, FILE *in, char *src) {
+    Cell *port;
     Cell *ctx = ischeme_ctx_new();
-    ctx_inport(ctx) = ischeme_port_new(ctx, pt, src);
+    if (pt == PORT_STDIN) {
+        port = mk_port(ctx, stdin, "stdin", pt);
+    } else if (pt == PORT_INPUT_FILE) {
+        port = mk_port(ctx, in, src, pt);
+    } else if (pt == PORT_INPUT_STRING) {
+        port =  mk_port(ctx, const_cast<char*>(src), const_cast<char*>(src) + strlen(src), pt);
+    }
+    ctx_inport(ctx) = port;
     ctx_load_file(ctx, 0) = ctx_inport(ctx);
     return ctx;
 }
@@ -3704,6 +3712,7 @@ int main(int argc, char *argv[]) {
             pt = PORT_STRING;
             str = argv[2];
         } else if (!access(argv[1], F_OK | R_OK)) {
+            pt = PORT_INPUT_FILE;
             in = fopen(argv[1], "r");
             str = argv[1];
             if (!in) {
@@ -3717,6 +3726,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (in == stdin) {
+        pt = PORT_STDIN;
         printf("iScheme v0.1 by yuanjq\n");
     }
 
@@ -3779,16 +3789,21 @@ Cell *ischeme_ctx_new() {
 
 Cell *ischeme_port_new(Cell *ctx, PortType pt, const char *src) {
     Cell *port = NULL;
-    if (pt & PORT_STRING) {
+    if (pt & PORT_STDIO) {
+        if (pt == PORT_STDIN)
+            port = mk_port(ctx, stdin, "stdin", pt);
+        else if (pt == PORT_STDOUT)
+            port = mk_port(ctx, stdout, "stdout", pt);
+    } else if (pt & PORT_STRING) {
         port = mk_port(ctx, const_cast<char*>(src), const_cast<char*>(src) + strlen(src), pt);
     } else if (pt & PORT_FILE) {
         if (!access(src, F_OK | R_OK)) {
-            FILE *in = fopen(src, "r");
-            if (!in) {
+            FILE *fp = fopen(src, "r");
+            if (!fp) {
                 IError("cant't open file '%s'", src);
                 return NULL;
             }
-            port = mk_port(ctx, in, src, pt);
+            port = mk_port(ctx, fp, src, pt);
         }
     }
     return port; 

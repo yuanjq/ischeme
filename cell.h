@@ -34,6 +34,7 @@ typedef unsigned long           ulong;
 #define MAX_LOAD_FILES          256
 #define STR_BUF_SIZE            128
 
+#define POINTER_TAG             0xA745C39BuL
 #define T_MASK                  0x0000FFFF
 #define M_MASK                  0xFFFF0000
 #define M_IMMUTABLE             0x00010000
@@ -371,6 +372,7 @@ struct Context {
     Cell *code;
     Cell *data;
     Cell *cont;
+    Cell *saved;
 
     Cell *lambda;
     Cell *quote;
@@ -400,7 +402,8 @@ struct Macro {
 };
 
 struct Cell {
-    uint t;
+    ushort t;
+    uint ptrtag;
     union {
         Op          op;
         uchar       chr;

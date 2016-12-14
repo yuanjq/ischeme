@@ -90,6 +90,14 @@ static void *cell_try_alloc(Cell *ctx, uint size) {
     return NULL;
 }
 
+static void cell_mark(Cell *ctx) {
+
+}
+
+static void cell_sweep(Cell *ctx) {
+
+}
+
 uint cell_gc(Cell *ctx, uint *sum) {
     // TODO: gc
     return 0;

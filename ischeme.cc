@@ -961,7 +961,6 @@ static double xtod(char *num, int size, int radix) {
     return dnum;
 }
 
-
 static Cell *write_number(Cell *ctx, Cell *port, Cell *num, char *s) {
     uchar t = number_type(num);
     if (t == NUMBER_LONG) {
@@ -3732,6 +3731,10 @@ int main(int argc, char *argv[]) {
 }
 
 /**************** ffi ****************/
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void ischeme_init() {
 }
 
@@ -3739,7 +3742,7 @@ Cell *ischeme_ctx_new() {
     Segment *seg;
     Cell dummy_ctx, *ctx = NULL;
 
-    seg = cell_mk_segment(SEG_INIT_MEM_SIZE, 0);
+    seg = cell_mk_segment(ISC_SEG_INIT_SIZE);
     if (!seg) {
         IError("no memory");
         return NULL;
@@ -3829,3 +3832,7 @@ void ischeme_print_to(Cell *ctx, Cell *c, Cell *port) {
 void ischeme_free(Cell *c) {
     // TODO:free
 }
+
+#ifdef __cplusplus
+}
+#endif

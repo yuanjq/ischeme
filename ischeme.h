@@ -1,5 +1,9 @@
 #pragma once
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum PortType {
     PORT_FREE           = 0,
     PORT_INPUT          = 1<<1,
@@ -27,3 +31,7 @@ Cell *ischeme_eval_file(Cell *ctx, const char *file);
 void ischeme_print(Cell *ctx, Cell *c);
 void ischeme_print_to(Cell *ctx, Cell *c, Cell *port);
 void ischeme_free(Cell *c);
+
+#ifdef __cplusplus
+}
+#endif

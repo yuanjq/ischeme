@@ -8,11 +8,11 @@
 #define IDEBUG_MORE
 
 #ifdef  IDEBUG_MORE
-#define IMessage(fmt, ...)  printf("*Message*: " fmt "\n", ##__VA_ARGS__)
-#define IWarning(fmt, ...)  printf("*Warning*: " fmt "\n", ##__VA_ARGS__)
-#define IError(fmt, ...)    printf("*Error*: " fmt "\n", ##__VA_ARGS__)
-#define ITraceEnter()       IMessage("Func %s enter.", __FUNCTION__)
-#define ITraceLeave()       IMessage("Func %s leave.", __FUNCTION__)
+#define IMessage(fmt, ...)      printf("*Message*: " fmt "\n", ##__VA_ARGS__)
+#define IWarning(fmt, ...)      printf("*Warning*: " fmt "\n", ##__VA_ARGS__)
+#define IError(fmt, ...)        printf("*Error*: " fmt "\n", ##__VA_ARGS__)
+#define ITraceEnter()           IMessage("Func %s enter.", __FUNCTION__)
+#define ITraceLeave()           IMessage("Func %s leave.", __FUNCTION__)
 #else
 #define IMessage(fmt, ...)
 #define IWarning(fmt, ...)
@@ -21,14 +21,16 @@
 #define ITraceLeave()
 #endif
 
-typedef unsigned char       uchar;
-typedef unsigned int        uint;
-typedef unsigned long       ulong;
+typedef unsigned char           uchar;
+typedef unsigned short          ushort;
+typedef unsigned int            uint;
+typedef unsigned long           ulong;
 
 #define TRUE                    1
 #define FALSE                   0
-#define MAX_SEGS_COUNT          128
-#define SEG_INIT_MEM_SIZE       (100*1024*1024)
+#define ISC_SEG_NUM             32
+#define ISC_SEG_SIZE            (8*1024*1024)
+#define ISC_SEG_INIT_SIZE       ISC_SEG_SIZE
 #define MAX_LOAD_FILES          256
 #define STR_BUF_SIZE            128
 
@@ -214,24 +216,6 @@ enum Token {
     TOK_MAX
 };
 
-#if 0
-enum PortType {
-    PORT_FREE           = 0,
-    PORT_INPUT          = 1<<1,
-    PORT_OUTPUT         = 1<<2,
-    PORT_FILE           = 1<<3,
-    PORT_STRING         = 1<<4,
-    PORT_STDIO          = 1<<5,
-    PORT_STDIN          = 1<<1 | 1<<3 | 1<<5,
-    PORT_STDOUT         = 1<<2 | 1<<3 | 1<<5,
-    PORT_INPUT_FILE     = 1<<1 | 1<<3,
-    PORT_INPUT_STRING   = 1<<1 | 1<<4,
-    PORT_OUTPUT_FILE    = 1<<2 | 1<<3,
-    PORT_OUTPUT_STRING  = 1<<2 | 1<<4,
-    PORT_EOF            = 1<<6,
-};
-#endif
-
 enum NumberType {
     NUMBER_LONG,
     NUMBER_DOUBLE,
@@ -370,18 +354,7 @@ struct Exception {
     Cell *src;
 };
 
-struct SegFreeList {
-  uint size;
-  SegFreeList *next;
-};
-
-struct Segment {
-  uint size, max_size;
-  SegFreeList *free_list;
-  Segment *next;
-  char *data;
-};
-
+struct Segment;
 struct Context {
     Segment *segments;
     Cell *global_env;
@@ -480,4 +453,4 @@ struct OpCode {
 /************** function *************/
 void *cell_alloc(Cell *ctx, uint size);
 uint cell_gc(Cell *, uint*);
-Segment *cell_mk_segment(int, int);
+Segment *cell_mk_segment(uint);

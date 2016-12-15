@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS += -std=c++11 -O2
+CXXFLAGS += -std=c++11 -O2 -fPIC
 LDFLAGS += -lm
 
 TARGET = ischeme
@@ -16,7 +16,7 @@ all: $(TARGET) $(TARGET_SO)
 $(TARGET): $(OBJ)
 	$(CXX) -o $@ $^ $(LDFLAGS)
 $(TARGET_SO): $(OBJ)
-	$(CXX) -fPIC -shared -o $@ $^ $(LDFLAGS)
+	$(CXX) -shared -o $@ $^ $(LDFLAGS)
 $(OBJ): $(OBJ_DIR)/%.o : %.cc
 	@mkdir -p $(OBJ_DIR)
 	$(CXX) -c $< -o $@ $(CXXFLAGS)

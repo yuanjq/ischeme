@@ -8,6 +8,8 @@
 #define ISC_SEG_REDUCE_THRESHOLD    0.25
 #define ISC_SEG_GROW_RATIO          1.5
 
+#define is_valid_object             (c->ptrtag == POINTER_TAG)
+
 struct SegFreeList {
   uint size;
   SegFreeList *next;
@@ -90,17 +92,171 @@ static void *cell_try_alloc(Cell *ctx, uint size) {
     return NULL;
 }
 
-static void cell_mark(Cell *ctx) {
+static uint cell_mark(Cell *ctx, Cell *c) {
+    if (!is_valid_object(c) || !is_marked(c)) {
+        return 0;
+    }
+    uint n = 1;
+    cell_markedp(c) = true;
+    switch (cell_type(c)) {
+    case CHAR:
+    case BOOLEAN:
+    case STRING:
+    case SYMBOL:
+    case SYNTAX:
+    case IPROC:
+    case EPROC:
+        break;
+    case PORT:
+        if ((port_type(c) & PORT_FILE) &&
+                port_file_name(c)) {
+            n += cell_mark(ctx, port_file_name(c));
+        }
+        break;
+    case NUMBER:
+        switch (number_type(c)) {
+        case NUMBER_FRACTION:
+            n += cell_mark(ctx, number_fn_nr(c));
+            n += cell_mark(ctx, number_fn_dr(c));
+            break;
+        case NUMBER_COMPLEX:
+            n += cell_mark(ctx, number_cx_rl(c));
+            n += cell_mark(ctx, number_cx_im(c));
+            break;
+        }
+        break;
+    case PAIR:
+        n += cell_mark(ctx, car(c));
+        n += cell_mark(ctx, cdr(c));
+        break;
+    case LIST:
+        for (Cell *ls=c; is_pair(ls); ls=cdr(ls)) {
+            n += cell_mark(ctx, car(ls));
+        }
+        break;
+    case VECTOR: {
+            int len = vector_length(c);
+            for (int i=0; i<len; i++) {
+                n += cell_mark(ctx, vector_data(c)[i]);
+            }
+        }
+        break; 
+    case PROC:
+        if (proc_name(c)) {
+            n += cell_mark(ctx, proc_name(c));
+        }
+        n += cell_mark(ctx, proc_closure(c));
+        break;
+    case CLOSURE:
+        n += cell_mark(ctx, closure_args(c));
+        n += cell_mark(ctx, closure_code(c));
+        n += cell_mark(ctx, closure_env(c));
+        break;
+    case CONTEXT:
+        n += cell_mark(ctx, c);
+        n += cell_mark(ctx, ctx_global_env(c));
+        n += cell_mark(ctx, ctx_symbols(c));
+        n += cell_mark(ctx, ctx_inport(c));
+        n += cell_mark(ctx, ctx_outport(c);
+        for (int i=0; i<=ctx_file_idx(c); i++) {
+            n += cell_mark(ctx, ctx_load_file(c, i));
+        }
+        n += cell_mark(ctx, ctx_ret(c));
+        n += cell_mark(ctx, ctx_args(c));
+        n += cell_mark(ctx, ctx_env(c));
+        n += cell_mark(ctx, ctx_code(c));
+        n += cell_mark(ctx, ctx_data(c));
+        n += cell_mark(ctx, ctx_continue(c));
+        n += cell_mark(ctx, ctx_saved(c));
+        break;
+    case MACRO:
+        n += cell_mark(ctx, macro_matchers(c));
+        n += cell_mark(ctx, macro_env(c));
+        break;
+    case MATCHER:
+        if (matcher_name(c)) {
+            n += cell_mark(ctx, matcher_name(c));
+        }
+        if (matcher_value(c)) {
+            n += cell_mark(ctx, matcher_value(c));
+        }
+        break;
+    case EXPANDER:
+        if (expander_name(c)) {
+            n += cell_mark(ctx, expander_name(c));
+        }
+        if (expander_value(c)) {
+            n += cell_mark(ctx, expander_value(c));
+        }
+        break;
+    case CLOSURE_EXPR:
+        n += cell_mark(ctx, closure_expr_expr(c));
+        n += cell_mark(ctx, closure_expr_env(c));
+        break;
+    case INSTRUCT:
+        n += cell_mark(ctx, instruct_args(c));
+        n += cell_mark(ctx, instruct_code(c));
+        n += cell_mark(ctx, instruct_data(c));
+        n += cell_mark(ctx, instruct_env(c));
+        break;
+    case CONTINUE:
+        n += cell_mark(ctx, continue_car(c));
+        n += cell_mark(ctx, continue_cdr(c));
+        break;
+    case EXCEPTION:
+        if (exception_msg(c)) {
+            n += cell_mark(ctx, exception_msg(c));
+        }
+        if (exception_src(c)) {
+            n += cell_mark(ctx, exception_src(c));
+        }
+        if (exception_trg(c)) {
+            n += cell_mark(ctx, exception_trg(c));
+        }
+        break;
+    case ENVIR:
+    case PROMISE:
+    default:
+        return 0;
+    }
+    return n;
+}
+
+static bool _in_freelist(SegFreeList *list, void *c) {
 
 }
 
-static void cell_sweep(Cell *ctx) {
+static void *_skip_freelist(SegFreeList *list, void *c) {
 
 }
 
-uint cell_gc(Cell *ctx, uint *sum) {
-    // TODO: gc
-    return 0;
+static uint cell_sweep(Cell *ctx, uint *sum_free, uint *max_free) {
+    uint total = 0;
+    Segment *seg = ctx_segments(ctx);
+    for (Segment *it=seg; it; it=it->next) {
+        void* st = segment_align(it->data + S(SegFreeList));
+        void* ed = it + it->size - cell_sizeof(chr);
+        void* p = st;
+        while (p <= ed) {
+            p = _skip_freelist(it, segment_align(p));
+            if (p > ed) {
+                break;
+            }
+            if (is_valid_object(p)) {
+                if (!cell_markedp((Cell*)p)) {
+                    //
+                }
+            }
+            p += segment_align(1);
+        }
+    }
+}
+
+uint cell_gc(Cell *ctx, uint *max_free) {
+    uint sum_free = 0;
+    cell_mark(ctx, ctx);
+    cell_sweep(ctx, sum_free, max_free);
+    return sum_free;
 }
 
 void *cell_alloc(Cell *ctx, uint size) {
@@ -111,7 +267,7 @@ void *cell_alloc(Cell *ctx, uint size) {
     size = segment_align(size);
     res = cell_try_alloc(ctx, size);
     if (!res) {
-        max_freed = cell_gc(ctx, &sum_freed);
+        sum_freed = cell_gc(ctx, &max_freed);
         total_size = segment_total_size(ctx_segments(ctx));
         if ((max_freed < size || (total_size - sum_freed > total_size * ISC_SEG_GROW_THRESHOLD)) && total_size + size < ISC_SEG_MAX_SIZE) {
             cell_grow_segment(ctx, size);

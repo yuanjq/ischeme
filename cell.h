@@ -58,6 +58,7 @@ typedef unsigned long           ulong;
 #define cell_sizeof(x)          (offsetof(Cell, chr) + S(((Cell*)0)->x))
 #define cell_new(_c,_x,_t)      ({ Cell *c = (Cell*)cell_alloc(_c, cell_sizeof(_x));\
                                    if (c) c->t = _t; c;})
+#define cell_markedp(c)         (c->marked)
 
 #define syntax_new(c)           cell_new(c, op, SYNTAX)
 #define iproc_new(c)            cell_new(c, op, IPROC)
@@ -119,7 +120,6 @@ typedef unsigned long           ulong;
 #define continue_car(c)         (c->pair.a)
 #define continue_cdr(c)         (c->pair.d)
 
-#define closure_name(c)         (cell_field(c,clos,name))
 #define closure_args(c)         (cell_field(c,clos,args))
 #define closure_code(c)         (cell_field(c,clos,code))
 #define closure_env(c)          (cell_field(c,clos,env))
@@ -331,10 +331,8 @@ struct Vector {
 };
 
 struct Closure {
-    Cell *name;
     Cell *args;
     Cell *code;
-    Cell *data;
     Cell *env;
 };
 
@@ -403,6 +401,7 @@ struct Macro {
 
 struct Cell {
     ushort t;
+    uchar marked;
     uint ptrtag;
     union {
         Op          op;

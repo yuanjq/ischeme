@@ -1,5 +1,6 @@
 #include <string.h>
 #include "cell.h"
+#include "ischeme.h"
 
 #define ISC_SEG_NUM                 32
 #define ISC_SEG_SIZE                (8*1024*1024)
@@ -8,7 +9,8 @@
 #define ISC_SEG_REDUCE_THRESHOLD    0.25
 #define ISC_SEG_GROW_RATIO          1.5
 
-#define is_valid_object             (c->ptrtag == POINTER_TAG)
+#define is_valid_object(c)          ((c)->ptrtag == POINTER_TAG)
+#define is_marked(c)                cell_markedp(c)
 
 struct SegFreeList {
   uint size;
@@ -93,7 +95,7 @@ static void *cell_try_alloc(Cell *ctx, uint size) {
 }
 
 static uint cell_mark(Cell *ctx, Cell *c) {
-    if (!is_valid_object(c) || !is_marked(c)) {
+    if (!is_valid_object(c) || is_marked(c)) {
         return 0;
     }
     uint n = 1;
@@ -157,7 +159,7 @@ static uint cell_mark(Cell *ctx, Cell *c) {
         n += cell_mark(ctx, ctx_global_env(c));
         n += cell_mark(ctx, ctx_symbols(c));
         n += cell_mark(ctx, ctx_inport(c));
-        n += cell_mark(ctx, ctx_outport(c);
+        n += cell_mark(ctx, ctx_outport(c));
         for (int i=0; i<=ctx_file_idx(c); i++) {
             n += cell_mark(ctx, ctx_load_file(c, i));
         }
@@ -167,7 +169,7 @@ static uint cell_mark(Cell *ctx, Cell *c) {
         n += cell_mark(ctx, ctx_code(c));
         n += cell_mark(ctx, ctx_data(c));
         n += cell_mark(ctx, ctx_continue(c));
-        n += cell_mark(ctx, ctx_saved(c));
+        n += cell_mark(ctx, ctx_saves(c));
         break;
     case MACRO:
         n += cell_mark(ctx, macro_matchers(c));
@@ -222,40 +224,117 @@ static uint cell_mark(Cell *ctx, Cell *c) {
     return n;
 }
 
-static bool _in_freelist(SegFreeList *list, void *c) {
-
+static int _sizeof_cell(Cell *c) {
+    int s = 0;
+    switch (cell_type(c)) {
+    case CHAR:
+        s = cell_sizeof(chr);
+        break;
+    case BOOLEAN:
+        s = cell_sizeof(bl);
+        break;
+    case NUMBER:
+        s = cell_sizeof(num);
+        break;
+    case STRING:
+    case SYMBOL:
+        s = cell_sizeof(str) + string_size(c);
+        break;
+    case SYNTAX:
+    case IPROC:
+        s = cell_sizeof(op);
+        break;
+    case PAIR:
+    case LIST:
+    case CONTINUE:
+        s = cell_sizeof(pair);
+        break;
+    case VECTOR:
+        s = cell_sizeof(vector) + vector_length(c) * S(Cell*);
+        break;
+    case PORT:
+        s = cell_sizeof(port);
+        break;
+    case PROC:
+        s = cell_sizeof(proc);
+        break;
+    case EPROC:
+        s = cell_sizeof(eproc);
+        break;
+    case CLOSURE:
+        s = cell_sizeof(clos);
+        break;
+    case CONTEXT:
+        s = cell_sizeof(ctx);
+        break;
+    case MACRO:
+        s = cell_sizeof(macro);
+        break;
+    case MATCHER:
+        s = cell_sizeof(mt);
+        break;
+    case EXPANDER:
+        s = cell_sizeof(expd);
+        break;
+    case CLOSURE_EXPR:
+        s = cell_sizeof(closexpr);
+        break;
+    case INSTRUCT:
+        s = cell_sizeof(inst);
+        break;
+    case EXCEPTION:
+        s = cell_sizeof(excpt);
+        break;
+    case PROMISE:
+    case ENVIR:
+    default:
+        break;
+    }
+    return s;
 }
 
-static void *_skip_freelist(SegFreeList *list, void *c) {
-
-}
-
-static uint cell_sweep(Cell *ctx, uint *sum_free, uint *max_free) {
-    uint total = 0;
+static uint cell_sweep(Cell *ctx, uint *sum_freed, uint *max_freed) {
+    uint total = 0, size;
     Segment *seg = ctx_segments(ctx);
+    SegFreeList *p, *q, *r;
+    *sum_freed = *max_freed = 0;
     for (Segment *it=seg; it; it=it->next) {
-        void* st = segment_align(it->data + S(SegFreeList));
-        void* ed = it + it->size - cell_sizeof(chr);
-        void* p = st;
-        while (p <= ed) {
-            p = _skip_freelist(it, segment_align(p));
-            if (p > ed) {
-                break;
-            }
-            if (is_valid_object(p)) {
-                if (!cell_markedp((Cell*)p)) {
-                    //
+        void* st = it->data + segment_align(S(SegFreeList));
+        void* ed = it + it->size;
+        p = (SegFreeList*)st;
+        while (p < ed) {
+            for (q=it->free_list; q && q<p; r=q, q=q->next);
+            if (is_valid_object((Cell*)p) && !cell_markedp((Cell*)p)) {
+                size = _sizeof_cell((Cell*)p);
+                if (p == r + r->size && p + size == q) {
+                    r->size += (size + q->size);
+                    r->next = q->next;
+                } else if (p == r + r->size) {
+                    r->size += size;
+                } else if (p + size == q) {
+                    p->size = size + q->size;
+                    r->next = p;
+                } else {
+                    p->next = r->next;
+                    r->next = p;
+                    p->size = size;
                 }
+                if (size > *max_freed) {
+                    *max_freed = size;
+                }
+                *sum_freed += size;
+                ++total;
             }
             p += segment_align(1);
         }
     }
+    return total;
 }
 
 uint cell_gc(Cell *ctx, uint *max_free) {
     uint sum_free = 0;
     cell_mark(ctx, ctx);
-    cell_sweep(ctx, sum_free, max_free);
+    cell_sweep(ctx, &sum_free, max_free);
     return sum_free;
 }
 

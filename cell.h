@@ -35,12 +35,12 @@ typedef unsigned long           ulong;
 #define STR_BUF_SIZE            128
 
 #define POINTER_TAG             0xA745C39BuL
-#define T_MASK                  0x0000FFFF
-#define M_MASK                  0xFFFF0000
-#define M_IMMUTABLE             0x00010000
-#define M_REFERENCE             0x00020000
-#define T(c)                    (c->t & T_MASK)
-#define M(c)                    (c->t & M_MASK)
+#define T_MASK                  0x00FF
+#define M_MASK                  0xFF00
+#define M_IMMUTABLE             0x0100
+#define M_REFERENCE             0x0200
+#define T(c)                    ((c)->t & T_MASK)
+#define M(c)                    ((c)->t & M_MASK)
 
 #define S(t)                    sizeof(t)
 #define CSTR(s)                 const_cast<char*>(s)
@@ -56,9 +56,9 @@ typedef unsigned long           ulong;
 #define cell_free               free
 #define cell_field(c,t,f)       ((c)->t.f)
 #define cell_sizeof(x)          (offsetof(Cell, chr) + S(((Cell*)0)->x))
-#define cell_new(_c,_x,_t)      ({ Cell *c = (Cell*)cell_alloc(_c, cell_sizeof(_x));\
-                                   if (c) c->t = _t; c;})
-#define cell_markedp(c)         (c->marked)
+#define cell_new(_c,_x,_t)      ({ Cell *c = (Cell*)cell_alloc(_c, cell_sizeof(_x)); if (c) { c->t = _t; c->ptrtag = POINTER_TAG; } c; })
+#define cell_ptrtag(c)          ((c)->ptrtag)
+#define cell_markedp(c)         ((c)->marked)
 
 #define syntax_new(c)           cell_new(c, op, SYNTAX)
 #define iproc_new(c)            cell_new(c, op, IPROC)
@@ -150,9 +150,9 @@ typedef unsigned long           ulong;
 #define ctx_symbols(c)          (cell_field(c,ctx,symbols))
 #define ctx_inport(c)           (cell_field(c,ctx,inport))
 #define ctx_outport(c)          (cell_field(c,ctx,outport))
-#define ctx_load_files(c)       (cell_field(c,ctx,load_files))
-#define ctx_load_file(c,n)      (cell_field(c,ctx,load_files)[n])
-#define ctx_file_idx(c)         (cell_field(c,ctx,file_idx))
+#define ctx_inports(c)          (cell_field(c,ctx,inports))
+#define ctx_inports_head(c)     (ctx_inports(c).front())
+#define ctx_inports_tail(c)     (ctx_inports(c).back())
 #define ctx_op(c)               (cell_field(c,ctx,op))
 #define ctx_ret(c)              (cell_field(c,ctx,ret))
 #define ctx_args(c)             (cell_field(c,ctx,args))
@@ -160,6 +160,7 @@ typedef unsigned long           ulong;
 #define ctx_code(c)             (cell_field(c,ctx,code))
 #define ctx_data(c)             (cell_field(c,ctx,data))
 #define ctx_continue(c)         (cell_field(c,ctx,cont))
+#define ctx_saves(c)            (cell_field(c,ctx,saves))
 #define ctx_lambda(c)           (cell_field(c,ctx,lambda))
 #define ctx_quote(c)            (cell_field(c,ctx,quote))
 #define ctx_quasiquote(c)       (cell_field(c,ctx,qquote))
@@ -353,6 +354,11 @@ struct Exception {
     Cell *src;
 };
 
+struct Preserved {
+    Cell *var;
+    Cell *next;
+};
+
 struct Segment;
 struct Context {
     Segment *segments;
@@ -360,8 +366,7 @@ struct Context {
     Cell *symbols;
     Cell *inport;
     Cell *outport;
-    Cell *load_files[MAX_LOAD_FILES];
-    int file_idx;
+    vector<Cell*> inports;
 
     Op op;
     Cell *ret;
@@ -370,7 +375,7 @@ struct Context {
     Cell *code;
     Cell *data;
     Cell *cont;
-    Cell *saved;
+    Cell *saves;
 
     Cell *lambda;
     Cell *quote;
@@ -432,25 +437,84 @@ struct OpCode {
     int max_args;
     const char *arg_types;
 };
+#define DELIMITERS      "()[]{}\";\f\t\v\n\r "
 
-#define T_ANY       "\001"
-#define T_CHAR      "\002"
-#define T_NUMBER    "\003"
-#define T_REAL      "\004"
-#define T_INTEGER   "\005"
-#define T_NATURAL   "\006"
-#define T_STRING    "\007"
-#define T_SYMBOL    "\010"
-#define T_PAIR      "\011"
-#define T_LIST      "\012"
-#define T_VECTOR    "\013"
-#define T_PROC      "\014"
-#define T_ENVIR     "\015"
-#define T_CONTI     "\016"
-#define T_PORT      "\017"
-#define T_INPORT    "\020"
-#define T_OUTPORT   "\021"
+#define T_ANY       	"\001"
+#define T_CHAR      	"\002"
+#define T_NUMBER    	"\003"
+#define T_REAL      	"\004"
+#define T_INTEGER   	"\005"
+#define T_NATURAL   	"\006"
+#define T_STRING    	"\007"
+#define T_SYMBOL    	"\010"
+#define T_PAIR      	"\011"
+#define T_LIST      	"\012"
+#define T_VECTOR    	"\013"
+#define T_PROC      	"\014"
+#define T_ENVIR     	"\015"
+#define T_CONTI     	"\016"
+#define T_PORT      	"\017"
+#define T_INPORT    	"\020"
+#define T_OUTPORT   	"\021"
 
+#define car(c)      	((c) && T(c) == PAIR ? (c)->pair.a : NULL)
+#define cdr(c)      	((c) && T(c) == PAIR ? (c)->pair.d : NULL)
+#define caar(c)     	car(car(c))
+#define cadr(c)     	car(cdr(c))
+#define cdar(c)     	cdr(car(c))
+#define cddr(c)     	cdr(cdr(c))
+#define caaar(c)    	car(car(car(c)))
+#define caadr(c)    	car(car(cdr(c)))
+#define cadar(c)    	car(cdr(car(c)))
+#define caddr(c)    	car(cdr(cdr(c)))
+#define cdaar(c)    	cdr(car(car(c)))
+#define cdadr(c)    	cdr(car(cdr(c)))
+#define cddar(c)    	cdr(cdr(car(c)))
+#define cdddr(c)    	cdr(cdr(cdr(c)))
+
+#define is_nil(c) 		((c) == CELL_NIL)
+#define is_true(c)  	((c) == CELL_TRUE)
+#define is_false(c) 	((c) == CELL_FALSE)
+#define is_eof(c)   	((c) == CELL_EOF)
+#define is_undef(c) 	((c) == CELL_UNDEF)
+#define is_ellipsis(c)	((c) == CELL_ELLIPSIS)
+#define is_any(c)     	(TRUE)
+#define is_boolean(c) 	((c) && T(c) == BOOLEAN)
+#define is_char(c)    	((c) && T(c) == CHAR)
+#define is_number(c)  	((c) && T(c) == NUMBER)
+#define is_real(c)    	((c) && T(c) == NUMBER && (number_type(c) == NUMBER_LONG || number_type(c) == NUMBER_DOUBLE || number_type(c) == NUMBER_FRACTION))
+#define is_integer(c) 	(is_number(c) && number_type(c) == NUMBER_LONG)
+#define is_natural(c) 	(is_integer_f(c) && number_long(c) >= 0)
+#define is_string(c)  	((c) && T(c) == STRING)
+#define is_pair(c)    	((c) && T(c) == PAIR)
+#define is_vector(c)  	((c) && T(c) == VECTOR)
+#define is_symbol(c)  	((c) && T(c) == SYMBOL)
+#define is_syntax(c)  	((c) && T(c) == SYNTAX)
+#define is_closure_expr(c)	((c) && T(c) == CLOSURE_EXPR)
+#define is_closure(c) 	((c) && T(c) == CLOSURE)
+#define is_proc(c)    	((c) && T(c) == PROC)
+#define is_iproc(c)   	((c) && T(c) == IPROC)
+#define is_eproc(c)   	((c) && T(c) == EPROC)
+#define is_procs(c)   	((c) && T(c) == PROC || T(c) == IPROC || T(c) == EPROC)
+#define is_envir(c)   	((c) && T(c) == ENVIR)
+#define is_macro(c)   	((c) && T(c) == MACRO)
+#define is_promise(c) 	((c) && T(c) == PROMISE)
+#define is_port(c)    	((c) && T(c) == PORT)
+#define is_inport(c)  	(is_port(c) && port_type(c) & PORT_INPUT)
+#define is_outport(c) 	(is_port(c) && port_type(c) & PORT_OUTPUT)
+#define is_instruct(c) 	((c) && T(c) == INSTRUCT)
+#define is_continue(c) 	((c) && T(c) == CONTINUE)
+#define is_exception(c) ((c) && T(c) == EXCEPTION)
+#define is_port_eof(c) 	((c) && T(c) == PORT && ((port_type(c) & PORT_FILE) && feof(port_file(c)) || (port_type(c) & PORT_STRING) && port_string_pos(c) == port_string_end(c)))
+#define is_immutable(c) ((c) && cell_type(c) & M_IMMUTABLE)
+#define is_interactive(ctx) (port_type(ctx_inports_head(ctx)) & PORT_FILE && port_file(ctx_inports_head(ctx)) == stdin)
+
+#define symbol(c)   	(is_symbol(c) ? symbol_data(c) : CSTR(""))
+#define string(c)   	(is_string(c) ? string_data(c) : CSTR(""))
+#define port(c)     	(is_port(c) ? &c->port : NULL)
+
+#define rplaca(c, _a)   (is_pair(c) ? c->pair.a = _a : NULL)
+#define rplacd(c, _d)   (is_pair(c) ? c->pair.d = _d : NULL)
 
 /************** function *************/
 void *cell_alloc(Cell *ctx, uint size);

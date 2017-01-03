@@ -2,14 +2,7 @@
 #include "cell.h"
 #include "ischeme.h"
 
-#define ISC_SEG_NUM                 32
-#define ISC_SEG_SIZE                (8*1024*1024)
-#define ISC_SEG_MAX_SIZE            (ISC_SEG_NUM*ISC_SEG_SIZE)
-#define ISC_SEG_GROW_THRESHOLD      0.75
-#define ISC_SEG_REDUCE_THRESHOLD    0.25
-#define ISC_SEG_GROW_RATIO          1.5
-
-#define is_valid_object(c)          ((c)->ptrtag == POINTER_TAG)
+#define is_valid_object(c)          (c && (c)->ptrtag == POINTER_TAG)
 #define is_marked(c)                cell_markedp(c)
 
 struct SegFreeList {

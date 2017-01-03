@@ -34,7 +34,10 @@ typedef unsigned long           ulong;
 #define ISC_SEG_NUM             32
 #define ISC_SEG_SIZE            (8*1024*1024)
 #define ISC_SEG_INIT_SIZE       ISC_SEG_SIZE
-#define MAX_LOAD_FILES          256
+#define ISC_SEG_MAX_SIZE        (ISC_SEG_NUM*ISC_SEG_SIZE)
+#define ISC_SEG_GROW_THRESHOLD  0.75
+#define ISC_SEG_REDU_THRESHOLD  0.25
+#define ISC_SEG_GROW_RATIO      1.5
 #define STR_BUF_SIZE            128
 
 #define POINTER_TAG             0xA745C39BuL

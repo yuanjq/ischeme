@@ -154,14 +154,16 @@ static uint cell_mark(Cell *ctx, Cell *c) {
         n += cell_mark(ctx, closure_code(c));
         n += cell_mark(ctx, closure_env(c));
         break;
-    case CONTEXT:
+    case CONTEXT: {
         n += cell_mark(ctx, c);
         n += cell_mark(ctx, ctx_global_env(c));
         n += cell_mark(ctx, ctx_symbols(c));
         n += cell_mark(ctx, ctx_inport(c));
         n += cell_mark(ctx, ctx_outport(c));
-        for (int i=0; i<=ctx_file_idx(c); i++) {
-            n += cell_mark(ctx, ctx_load_file(c, i));
+        vector<Cell*> inports = ctx_inports(ctx);
+        vector<Cell*>::iterator it;
+        for (it = inports.begin(); it != inports.end(); ++it) {
+            n += cell_mark(ctx, *it);
         }
         n += cell_mark(ctx, ctx_ret(c));
         n += cell_mark(ctx, ctx_args(c));
@@ -169,8 +171,11 @@ static uint cell_mark(Cell *ctx, Cell *c) {
         n += cell_mark(ctx, ctx_code(c));
         n += cell_mark(ctx, ctx_data(c));
         n += cell_mark(ctx, ctx_continue(c));
-        n += cell_mark(ctx, ctx_saves(c));
+        for (Preserved *saves=ctx_saves(c); saves; saves=saves->next) {
+            n += cell_mark(ctx, *(saves->var));
+        }
         break;
+    }
     case MACRO:
         n += cell_mark(ctx, macro_matchers(c));
         n += cell_mark(ctx, macro_env(c));
@@ -250,7 +255,7 @@ static int _sizeof_cell(Cell *c) {
         s = cell_sizeof(pair);
         break;
     case VECTOR:
-        s = cell_sizeof(vector) + vector_length(c) * S(Cell*);
+        s = cell_sizeof(vect) + vector_length(c) * S(Cell*);
         break;
     case PORT:
         s = cell_sizeof(port);
@@ -324,8 +329,10 @@ static uint cell_sweep(Cell *ctx, uint *sum_freed, uint *max_freed) {
                 }
                 *sum_freed += size;
                 ++total;
+                p += size;
+            } else {
+                p += segment_align(1);
             }
-            p += segment_align(1);
         }
     }
     return total;

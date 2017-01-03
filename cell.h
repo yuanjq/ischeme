@@ -4,6 +4,9 @@
 #include <stdlib.h>
 #include <stddef.h>
 #include <string>
+#include <vector>
+
+using std::vector;
 
 #define IDEBUG_MORE
 
@@ -93,8 +96,8 @@ typedef unsigned long           ulong;
 #define pair_car(c)             (cell_field(c,pair,a))
 #define pair_cdr(c)             (cell_field(c,pair,d))
 
-#define vector_length(c)        (cell_field(c,vector,length))
-#define vector_data(c)          (cell_field(c,vector,data))
+#define vector_length(c)        (cell_field(c,vect,length))
+#define vector_data(c)          (cell_field(c,vect,data))
 
 #define number_type(n)          (cell_field(n,num,t))
 #define number_long(n)          (cell_field(n,num,l))
@@ -153,6 +156,9 @@ typedef unsigned long           ulong;
 #define ctx_inports(c)          (cell_field(c,ctx,inports))
 #define ctx_inports_head(c)     (ctx_inports(c).front())
 #define ctx_inports_tail(c)     (ctx_inports(c).back())
+#define ctx_inports_push(c,p)   (ctx_inports(c).push_back(p))
+#define ctx_inports_pop(c)      (ctx_inports(c).pop_back())
+#define ctx_inports_size(c)     (ctx_inports(c).size())
 #define ctx_op(c)               (cell_field(c,ctx,op))
 #define ctx_ret(c)              (cell_field(c,ctx,ret))
 #define ctx_args(c)             (cell_field(c,ctx,args))
@@ -355,8 +361,8 @@ struct Exception {
 };
 
 struct Preserved {
-    Cell *var;
-    Cell *next;
+    Cell **var;
+    Preserved *next;
 };
 
 struct Segment;
@@ -375,7 +381,7 @@ struct Context {
     Cell *code;
     Cell *data;
     Cell *cont;
-    Cell *saves;
+    Preserved *saves;
 
     Cell *lambda;
     Cell *quote;
@@ -405,6 +411,9 @@ struct Macro {
 };
 
 struct Cell {
+    Cell() {};
+    ~Cell() {};
+
     ushort t;
     uchar marked;
     uint ptrtag;
@@ -415,7 +424,7 @@ struct Cell {
         String      str;
         Number      num;
         Pair        pair;
-        Vector      vector;
+        Vector      vect;
         Port        port;
         Instruct    inst;
         EProc       eproc;

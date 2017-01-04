@@ -2,8 +2,13 @@
 #include "cell.h"
 #include "ischeme.h"
 
+#define GC_DEBUG
 #define is_valid_object(c)          (c && (c)->ptrtag == POINTER_TAG)
 #define is_marked(c)                cell_markedp(c)
+
+#ifdef GC_DEBUG
+long g_gc_total = 0;
+#endif
 
 struct SegFreeList {
   uint size;
@@ -41,8 +46,7 @@ Segment *cell_mk_segment(uint size) {
     next = (SegFreeList*) ((void*)list + segment_align(S(SegFreeList)));
     list->size = 0;
     list->next = next;
-    //next->size = size - segment_align(S(Segment) + S(SegFreeList));
-    next->size = size - segment_align(S(Segment)) + segment_align(S(SegFreeList));
+    next->size = size - segment_align(S(Segment)) - segment_align(S(SegFreeList));
     next->next = NULL;
     return seg;
 }
@@ -73,7 +77,7 @@ static void *cell_try_alloc(Cell *ctx, uint size) {
         for (ls1=seg->free_list, ls2=ls1->next; ls2; ls1=ls2, ls2=ls2->next) {
             if (ls2->size >= size) {
                 ls3 = (SegFreeList*) ((void*)ls2 + segment_align(size));
-                if (ls3 + S(SegFreeList) <= ls2 + ls2->size) {
+                if (((void*)ls3) + S(SegFreeList) <= ((void*)ls2) + ls2->size) {
                     ls3->size = ls2->size - size;
                     ls3->next = ls2->next;
                     ls1->next = ls3;
@@ -149,7 +153,6 @@ static uint cell_mark(Cell *ctx, Cell *c) {
         n += cell_mark(ctx, closure_env(c));
         break;
     case CONTEXT: {
-        n += cell_mark(ctx, c);
         n += cell_mark(ctx, ctx_global_env(c));
         n += cell_mark(ctx, ctx_symbols(c));
         n += cell_mark(ctx, ctx_inport(c));
@@ -336,8 +339,12 @@ static uint cell_sweep(Cell *ctx, uint *sum_freed, uint *max_freed) {
 
 uint cell_gc(Cell *ctx, uint *max_free) {
     uint sum_free = 0;
-    cell_mark(ctx, ctx);
-    cell_sweep(ctx, &sum_free, max_free);
+    uint sum_marked = cell_mark(ctx, ctx);
+    uint sum_swept = cell_sweep(ctx, &sum_free, max_free);
+#ifdef GC_DEBUG
+    printf("\n** GC DEBUG **\n");
+    printf("total:%d, marked:%d, swept:%d, freed:%d\n", g_gc_total, sum_marked, sum_swept, sum_free);
+#endif
     return sum_free;
 }
 
@@ -350,7 +357,6 @@ void *cell_alloc(Cell *ctx, uint size) {
     res = cell_try_alloc(ctx, size);
     if (!res) {
         sum_freed = cell_gc(ctx, &max_freed);
-        printf("sum_freed:%d, max_freed:%d\n", sum_freed, max_freed);//test
         total_size = segment_total_size(ctx_segments(ctx));
         if ((max_freed < size || (total_size - sum_freed > total_size * ISC_SEG_GROW_THRESHOLD)) && total_size + size < ISC_SEG_MAX_SIZE) {
             cell_grow_segment(ctx, size);
@@ -362,5 +368,8 @@ void *cell_alloc(Cell *ctx, uint size) {
             while(1); 
         }
     }
+    #ifdef GC_DEBUG
+    ++g_gc_total;
+    #endif
     return res;
 }

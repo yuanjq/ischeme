@@ -14,7 +14,7 @@ struct Segment {
   uint size;
   SegFreeList *free_list;
   Segment *next;
-  char *data;
+  void *data;
 };
 
 static uint segment_total_size(Segment *seg) {
@@ -35,13 +35,14 @@ Segment *cell_mk_segment(uint size) {
     seg = (Segment *)cell_malloc(size);
     if (!seg) return NULL;
     seg->size = size;
-    seg->data = (char*) segment_align(S(seg->data) + (ulong)&(seg->data));
+    seg->data = (void*) segment_align(S(seg->data) + (ulong)&(seg->data));
     list = seg->free_list = (SegFreeList*) seg->data;
     seg->next = NULL;
-    next = (SegFreeList*) ((char*)list + segment_align(S(SegFreeList)));
+    next = (SegFreeList*) ((void*)list + segment_align(S(SegFreeList)));
     list->size = 0;
     list->next = next;
-    next->size = size - segment_align(S(Segment) + S(SegFreeList));
+    //next->size = size - segment_align(S(Segment) + S(SegFreeList));
+    next->size = size - segment_align(S(Segment)) + segment_align(S(SegFreeList));
     next->next = NULL;
     return seg;
 }
@@ -71,7 +72,7 @@ static void *cell_try_alloc(Cell *ctx, uint size) {
     for (seg=ctx_segments(ctx); seg; seg=seg->next) {
         for (ls1=seg->free_list, ls2=ls1->next; ls2; ls1=ls2, ls2=ls2->next) {
             if (ls2->size >= size) {
-                ls3 = (SegFreeList*) ((char*)ls2 + size);
+                ls3 = (SegFreeList*) ((void*)ls2 + segment_align(size));
                 if (ls3 + S(SegFreeList) <= ls2 + ls2->size) {
                     ls3->size = ls2->size - size;
                     ls3->next = ls2->next;
@@ -286,6 +287,7 @@ static int _sizeof_cell(Cell *c) {
     case PROMISE:
     case ENVIR:
     default:
+        printf("gc error: invalid type!\n");
         break;
     }
     return s;
@@ -298,23 +300,24 @@ static uint cell_sweep(Cell *ctx, uint *sum_freed, uint *max_freed) {
     *sum_freed = *max_freed = 0;
     for (Segment *it=seg; it; it=it->next) {
         void* st = it->data + segment_align(S(SegFreeList));
-        void* ed = it + it->size;
+        void* ed = ((void*)it) + it->size;
         p = (SegFreeList*)st;
         while (p < ed) {
-            for (q=it->free_list; q && q<p; r=q, q=q->next);
+            for (q=it->free_list; q && q<=p; r=q, q=q->next);
             if (is_valid_object((Cell*)p) && !cell_markedp((Cell*)p)) {
                 size = _sizeof_cell((Cell*)p);
-                if (p == r + r->size && p + size == q) {
+                cell_ptrtag(((Cell*)p)) = 0;
+                if (p == ((void*)r) + r->size && ((void*)p) + size == q) {
                     r->size += (size + q->size);
                     r->next = q->next;
-                } else if (p == r + r->size) {
+                } else if (p == ((void*)r) + r->size) {
                     r->size += size;
-                } else if (p + size == q) {
+                } else if (((void*)p) + size == q) {
                     p->size = size + q->size;
                     r->next = p;
                 } else {
-                    p->next = r->next;
                     r->next = p;
+                    p->next = q;
                     p->size = size;
                 }
                 if (size > *max_freed) {
@@ -322,9 +325,9 @@ static uint cell_sweep(Cell *ctx, uint *sum_freed, uint *max_freed) {
                 }
                 *sum_freed += size;
                 ++total;
-                p += size;
+                p = (SegFreeList*)(((void*)p) + size);
             } else {
-                p += segment_align(1);
+                p = (SegFreeList*)(((void*)p) + segment_align(1));
             }
         }
     }
@@ -347,6 +350,7 @@ void *cell_alloc(Cell *ctx, uint size) {
     res = cell_try_alloc(ctx, size);
     if (!res) {
         sum_freed = cell_gc(ctx, &max_freed);
+        printf("sum_freed:%d, max_freed:%d\n", sum_freed, max_freed);//test
         total_size = segment_total_size(ctx_segments(ctx));
         if ((max_freed < size || (total_size - sum_freed > total_size * ISC_SEG_GROW_THRESHOLD)) && total_size + size < ISC_SEG_MAX_SIZE) {
             cell_grow_segment(ctx, size);

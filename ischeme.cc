@@ -168,7 +168,7 @@ static Cell *mk_vector(Cell *ctx, uint len, Cell *fill) {
 static Cell *mk_closure_expr(Cell *ctx, Cell *expr, Cell *env) {
     Cell *c = closure_expr_new(ctx);
     if (c) {
-        cell_type(c) = CLOSURE_EXPR;
+        //cell_type(c) = CLOSURE_EXPR;
         closure_expr_expr(c) = expr;
         closure_expr_env(c) = env;
     }
@@ -2463,7 +2463,7 @@ static Cell *syntax_matcher_analyze(Cell *ctx, Cell *lit, Cell *matches, Cell *s
         return mk_exception(ctx, SyntaxError, mk_string(ctx, "invalid syntax format in syntax rules:"), matches, NULL);
     }
 
-    Cell *t1, *t2, *t3, *t4;
+    Cell *t1=NULL, *t2=NULL, *t3=NULL, *t4=NULL;
     gc_var7(machers, pat_vars, pattern, tmpl, t5, t6, t7);
     gc_preserve4(ctx, machers, pat_vars, pattern, tmpl);
     machers = cons(ctx, syn_env, CELL_NIL);

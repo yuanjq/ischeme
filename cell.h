@@ -61,7 +61,7 @@ typedef unsigned long           ulong;
 #define cell_malloc             malloc
 #define cell_free               free
 #define cell_field(c,t,f)       ((c)->t.f)
-#define cell_sizeof(x)          (offsetof(Cell, chr) + S(((Cell*)0)->x))
+#define cell_sizeof(x)          (offsetof(Cell, op) + S(((Cell*)0)->x))
 #define cell_new(_c,_x,_t)      ({ Cell *c = (Cell*)cell_alloc(_c, cell_sizeof(_x)); if (c) { c->t = _t; c->ptrtag = POINTER_TAG; } c; })
 #define cell_ptrtag(c)          ((c)->ptrtag)
 #define cell_markedp(c)         ((c)->marked)

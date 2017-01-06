@@ -307,28 +307,33 @@ static uint cell_sweep(Cell *ctx, uint *sum_freed, uint *max_freed) {
         p = (SegFreeList*)st;
         while (p < ed) {
             for (q=it->free_list; q && q<=p; r=q, q=q->next);
-            if (is_valid_object((Cell*)p) && !cell_markedp((Cell*)p)) {
-                size = _sizeof_cell((Cell*)p);
-                cell_ptrtag(((Cell*)p)) = 0;
-                if (p == ((void*)r) + r->size && ((void*)p) + size == q) {
-                    r->size += (size + q->size);
-                    r->next = q->next;
-                } else if (p == ((void*)r) + r->size) {
-                    r->size += size;
-                } else if (((void*)p) + size == q) {
-                    p->size = size + q->size;
-                    r->next = p;
+            if (is_valid_object((Cell*)p)) {
+                if (!cell_markedp((Cell*)p)) {
+                    size = _sizeof_cell((Cell*)p);
+                    cell_ptrtag(((Cell*)p)) = 0;
+                    if (p == ((void*)r) + r->size && ((void*)p) + size == q) {
+                        r->size += (size + q->size);
+                        r->next = q->next;
+                    } else if (p == ((void*)r) + r->size) {
+                        r->size += size;
+                    } else if (((void*)p) + size == q) {
+                        p->size = size + q->size;
+                        r->next = p;
+                    } else {
+                        r->next = p;
+                        p->next = q;
+                        p->size = size;
+                    }
+                    if (size > *max_freed) {
+                        *max_freed = size;
+                    }
+                    *sum_freed += size;
+                    ++total;
+                    p = (SegFreeList*)(((void*)p) + segment_align(size));
                 } else {
-                    r->next = p;
-                    p->next = q;
-                    p->size = size;
+                    cell_markedp(((Cell*)p)) = 0;
+                    p = (SegFreeList*)(((void*)p) + segment_align(_sizeof_cell(((Cell*)p))));
                 }
-                if (size > *max_freed) {
-                    *max_freed = size;
-                }
-                *sum_freed += size;
-                ++total;
-                p = (SegFreeList*)(((void*)p) + size);
             } else {
                 p = (SegFreeList*)(((void*)p) + segment_align(1));
             }

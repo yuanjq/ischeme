@@ -136,6 +136,7 @@ static Cell *mk_string(Cell *ctx, const char *fmt, ...) {
     c = (Cell*)cell_alloc(ctx, cell_sizeof(str) + size);
     if (c) {
         cell_type(c) = STRING;
+        cell_ptrtag(c) = POINTER_TAG;
         string_size(c) = size;
         string_data(c) = (char*)(&string_data(c) + 1);
         va_start(ap, fmt);

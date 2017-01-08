@@ -56,7 +56,7 @@ typedef unsigned long           ulong;
 #else
 #define segment_align(n)        cell_align(n, 4)
 #endif
-#define segment_align_size(s)   (S(Segment) + (s) + segment_align(1))
+#define segment_align_size(s)   (segment_align(S(Segment)) + segment_align(s))
 
 #define cell_malloc             malloc
 #define cell_free               free

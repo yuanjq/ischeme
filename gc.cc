@@ -2,11 +2,12 @@
 #include "cell.h"
 #include "ischeme.h"
 
-#define GC_DEBUG
+//#define GC_DEBUG
 #define is_valid_object(c)          (c && (c)->ptrtag == POINTER_TAG)
 #define is_marked(c)                cell_markedp(c)
 
 #ifdef GC_DEBUG
+#include <sys/time.h>
 long g_gc_total = 0;
 #endif
 
@@ -40,7 +41,7 @@ Segment *cell_mk_segment(uint size) {
     seg = (Segment *)cell_malloc(size);
     if (!seg) return NULL;
     seg->size = size;
-    seg->data = (void*) segment_align(S(seg->data) + (ulong)&(seg->data));
+    seg->data = (void*)seg + segment_align(S(Segment));
     list = seg->free_list = (SegFreeList*) seg->data;
     seg->next = NULL;
     next = (SegFreeList*) ((void*)list + segment_align(S(SegFreeList)));
@@ -76,10 +77,12 @@ static void *cell_try_alloc(Cell *ctx, uint size) {
     for (seg=ctx_segments(ctx); seg; seg=seg->next) {
         for (ls1=seg->free_list, ls2=ls1->next; ls2; ls1=ls2, ls2=ls2->next) {
             if (ls2->size >= size) {
-                ls3 = (SegFreeList*) ((void*)ls2 + segment_align(size));
+                ls3 = (SegFreeList*) ((void*)ls2 + size);
                 if (((void*)ls3) + S(SegFreeList) <= ((void*)ls2) + ls2->size) {
-                    ls3->size = ls2->size - size;
-                    ls3->next = ls2->next;
+                    uint sz = ls2->size;
+                    SegFreeList *nx = ls2->next;
+                    ls3->size = sz - size;
+                    ls3->next = nx;
                     ls1->next = ls3;
                 } else {
                     ls1->next = ls2->next;
@@ -126,8 +129,19 @@ static uint cell_mark(Cell *ctx, Cell *c) {
         }
         break;
     case PAIR:
-        n += cell_mark(ctx, car(c));
-        n += cell_mark(ctx, cdr(c));
+        //n += cell_mark(ctx, car(c));
+        //n += cell_mark(ctx, cdr(c));
+        for (;;) {
+            n += cell_mark(ctx, car(c));
+            c = cdr(c);
+            if (is_pair(c)) {
+                cell_markedp(c) = true;
+                n += 1;
+            } else {
+                n += cell_mark(ctx, c);
+                break;
+            }
+        }
         break;
     case LIST:
         for (Cell *ls=c; is_pair(ls); ls=cdr(ls)) {
@@ -204,8 +218,19 @@ static uint cell_mark(Cell *ctx, Cell *c) {
         n += cell_mark(ctx, instruct_env(c));
         break;
     case CONTINUE:
-        n += cell_mark(ctx, continue_car(c));
-        n += cell_mark(ctx, continue_cdr(c));
+        //n += cell_mark(ctx, continue_car(c));
+        //n += cell_mark(ctx, continue_cdr(c));
+        for (;;) {
+            n += cell_mark(ctx, continue_car(c));
+            c = continue_cdr(c);
+            if (is_continue(c)) {
+                cell_markedp(c) = true;
+                n += 1;
+            } else {
+                n += cell_mark(ctx, c);
+                break;
+            }
+        }
         break;
     case EXCEPTION:
         if (exception_msg(c)) {
@@ -305,30 +330,47 @@ static uint cell_sweep(Cell *ctx, uint *sum_freed, uint *max_freed) {
         void* st = it->data + segment_align(S(SegFreeList));
         void* ed = ((void*)it) + it->size;
         p = (SegFreeList*)st;
+        q = r = it->free_list;
         while (p < ed) {
-            for (q=it->free_list; q && q<=p; r=q, q=q->next);
-            if (is_valid_object((Cell*)p) && !cell_markedp((Cell*)p)) {
-                size = _sizeof_cell((Cell*)p);
-                cell_ptrtag(((Cell*)p)) = 0;
-                if (p == ((void*)r) + r->size && ((void*)p) + size == q) {
-                    r->size += (size + q->size);
-                    r->next = q->next;
-                } else if (p == ((void*)r) + r->size) {
-                    r->size += size;
-                } else if (((void*)p) + size == q) {
-                    p->size = size + q->size;
-                    r->next = p;
+            if (q && p >= q) {
+                for (; q && q<=p; r=q, q=q->next);
+            }
+            if (p < ((void*)r) + r->size) {
+                p = (SegFreeList*) ((void*)r + segment_align(r->size));
+            }
+            if (is_valid_object((Cell*)p)) {
+                if (!cell_markedp((Cell*)p)) {
+                    size = _sizeof_cell((Cell*)p);
+                    cell_ptrtag(((Cell*)p)) = 0;
+                    if (p == ((void*)r) + r->size && ((void*)p) + size == q) {
+                        size += q->size;
+                        r->size += size;
+                        r->next = q->next;
+                        q = q->next;
+                    } else if (p == ((void*)r) + r->size) {
+                        r->size += size;
+                    } else if (((void*)p) + size == q) {
+                        r->next = p;
+                        p->size = size + q->size;
+                        p->next = q->next;
+                        r = p;
+                        q = p->next;
+                    } else {
+                        r->next = p;
+                        p->next = q;
+                        p->size = size;
+                        r = p;
+                    }
+                    if (size > *max_freed) {
+                        *max_freed = size;
+                    }
+                    *sum_freed += size;
+                    ++total;
+                    p = (SegFreeList*)(((void*)p) + segment_align(size));
                 } else {
-                    r->next = p;
-                    p->next = q;
-                    p->size = size;
+                    cell_markedp(((Cell*)p)) = 0;
+                    p = (SegFreeList*)(((void*)p) + segment_align(_sizeof_cell(((Cell*)p))));
                 }
-                if (size > *max_freed) {
-                    *max_freed = size;
-                }
-                *sum_freed += size;
-                ++total;
-                p = (SegFreeList*)(((void*)p) + size);
             } else {
                 p = (SegFreeList*)(((void*)p) + segment_align(1));
             }
@@ -338,12 +380,23 @@ static uint cell_sweep(Cell *ctx, uint *sum_freed, uint *max_freed) {
 }
 
 uint cell_gc(Cell *ctx, uint *max_free) {
-    uint sum_free = 0;
-    uint sum_marked = cell_mark(ctx, ctx);
-    uint sum_swept = cell_sweep(ctx, &sum_free, max_free);
+    uint sum_free, sum_marked, sum_swept;
 #ifdef GC_DEBUG
+    struct timeval mst, med, sed;
+    gettimeofday(&mst, NULL);
+#endif
+    sum_marked = cell_mark(ctx, ctx);
+#ifdef GC_DEBUG
+    gettimeofday(&med, NULL);
+#endif
+    sum_swept = cell_sweep(ctx, &sum_free, max_free);
+#ifdef GC_DEBUG
+    gettimeofday(&sed, NULL);
     printf("\n** GC DEBUG **\n");
     printf("total:%d, marked:%d, swept:%d, freed:%d\n", g_gc_total, sum_marked, sum_swept, sum_free);
+    printf("marked cost time: %ldms\n", med.tv_sec * 1000 + med.tv_usec / 1000 - mst.tv_sec * 1000 - mst.tv_usec / 1000);
+    printf("swept  cost time: %ldms\n", sed.tv_sec * 1000 + sed.tv_usec / 1000 - med.tv_sec * 1000 - med.tv_usec / 1000);
+    g_gc_total = g_gc_total - sum_swept;
 #endif
     return sum_free;
 }
@@ -368,8 +421,8 @@ void *cell_alloc(Cell *ctx, uint size) {
             while(1); 
         }
     }
-    #ifdef GC_DEBUG
+#ifdef GC_DEBUG
     ++g_gc_total;
-    #endif
+#endif
     return res;
 }

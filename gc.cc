@@ -2,7 +2,7 @@
 #include "cell.h"
 #include "ischeme.h"
 
-//#define GC_DEBUG
+#define GC_DEBUG
 #define is_valid_object(c)          (c && (c)->ptrtag == POINTER_TAG)
 #define is_marked(c)                cell_markedp(c)
 
@@ -129,9 +129,9 @@ static uint cell_mark(Cell *ctx, Cell *c) {
         }
         break;
     case PAIR:
-        //n += cell_mark(ctx, car(c));
-        //n += cell_mark(ctx, cdr(c));
-        for (;;) {
+        n += cell_mark(ctx, car(c));
+        n += cell_mark(ctx, cdr(c));
+        /*for (;;) {
             n += cell_mark(ctx, car(c));
             c = cdr(c);
             if (is_pair(c)) {
@@ -141,7 +141,7 @@ static uint cell_mark(Cell *ctx, Cell *c) {
                 n += cell_mark(ctx, c);
                 break;
             }
-        }
+        }*/
         break;
     case LIST:
         for (Cell *ls=c; is_pair(ls); ls=cdr(ls)) {
@@ -218,9 +218,9 @@ static uint cell_mark(Cell *ctx, Cell *c) {
         n += cell_mark(ctx, instruct_env(c));
         break;
     case CONTINUE:
-        //n += cell_mark(ctx, continue_car(c));
-        //n += cell_mark(ctx, continue_cdr(c));
-        for (;;) {
+        n += cell_mark(ctx, continue_car(c));
+        n += cell_mark(ctx, continue_cdr(c));
+        /*for (;;) {
             n += cell_mark(ctx, continue_car(c));
             c = continue_cdr(c);
             if (is_continue(c)) {
@@ -230,7 +230,7 @@ static uint cell_mark(Cell *ctx, Cell *c) {
                 n += cell_mark(ctx, c);
                 break;
             }
-        }
+        }*/
         break;
     case EXCEPTION:
         if (exception_msg(c)) {

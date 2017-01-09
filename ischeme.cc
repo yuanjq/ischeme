@@ -15,8 +15,8 @@
 #define CELL_EOF                        &g_eof
 #define CELL_UNDEF                      &g_undef
 #define CELL_ELLIPSIS                   &g_ellipsis
-#define CELL_ERR                        (Cell*)-1
-#define CELL_SPLICING                   (Cell*)-2
+#define CELL_ERR                        &g_error
+#define CELL_SPLICING                   &g_splicing
 
 #define gotoOp(sc,o)                    ({ctx_op(sc)=o; goto Loop;})
 #define gotoOpEx(sc,o,a,c,d,e)          ({ctx_op(sc)=o; ctx_args(sc)=a; \
@@ -76,6 +76,8 @@ static Cell g_nil;
 static Cell g_eof;
 static Cell g_undef;
 static Cell g_ellipsis;
+static Cell g_error;
+static Cell g_splicing;
 
 
 /****************** function ****************/
@@ -169,7 +171,6 @@ static Cell *mk_vector(Cell *ctx, uint len, Cell *fill) {
 static Cell *mk_closure_expr(Cell *ctx, Cell *expr, Cell *env) {
     Cell *c = closure_expr_new(ctx);
     if (c) {
-        //cell_type(c) = CLOSURE_EXPR;
         closure_expr_expr(c) = expr;
         closure_expr_env(c) = env;
     }
@@ -219,13 +220,13 @@ static Cell *mk_port(Cell *ctx, FILE *f, const char *name, int t) {
     gc_var1(c);
     c = port_new(ctx);
     if (c) {
-        gc_preserve1(ctx, c);
         port_type(c) = t;
         port_file(c) = f;
         if (name) {
+            gc_preserve1(ctx, c);
             port_file_name(c) = mk_string(ctx, name);
+            gc_release(ctx);
         }
-        gc_release(ctx);
     }
     return c;
 }
@@ -672,8 +673,8 @@ static Cell *find_symbol(Cell *ctx, const char *s) {
 
 static Cell* internal(Cell *ctx, const char *s) {
     gc_var1(c);
-    gc_preserve1(ctx, c);
     if ((c = find_symbol(ctx, s)) != CELL_NIL) return c;
+    gc_preserve1(ctx, c);
     c = mk_symbol(ctx, s);
     ctx_symbols(ctx) = cons(ctx, c, ctx_symbols(ctx));
     gc_release(ctx);
@@ -1531,26 +1532,33 @@ static Cell *_num_calcu(Cell *ctx, int op, Cell *a, Cell *b) {
         }
         break;
     }
+    gc_release(ctx);
     return num;
 }
 
 static Cell *num_calcu(Cell *ctx, int op, Cell *a, Cell *b) {
+    gc_var2(c1, c2);
+    gc_preserve2(ctx, c1, c2);
+    c1 = a;
+    c2 = b;
     if (number_type(a) == NUMBER_DOUBLE ||
         (number_type(a) == NUMBER_COMPLEX && 
             (number_type(number_cx_rl(a)) == NUMBER_DOUBLE ||
              number_type(number_cx_im(a)) == NUMBER_DOUBLE))) {
         if (number_type(b) == NUMBER_LONG || number_type(b) == NUMBER_FRACTION ||
             (number_type(b) == NUMBER_COMPLEX && number_type(number_cx_rl(b)) != NUMBER_DOUBLE))
-        b = exact_to_inexact(ctx, b);
+        c2 = exact_to_inexact(ctx, b);
     } else {
         if (number_type(b) == NUMBER_DOUBLE ||
             (number_type(b) == NUMBER_COMPLEX && 
                 (number_type(number_cx_rl(b)) == NUMBER_DOUBLE ||
                  number_type(number_cx_im(b)) == NUMBER_DOUBLE))) {
-            a = exact_to_inexact(ctx, a);
+            c1 = exact_to_inexact(ctx, a);
         }
     }
-    return _num_calcu(ctx, op, a, b);
+    c1 = _num_calcu(ctx, op, c1, c2);
+    gc_release(ctx);
+    return c1;
 }
 
 static Cell *read_real(Cell *ctx, char **ppstart, char *pend, Exactness exact, Radix radix) {
@@ -1919,47 +1927,47 @@ Err:
 }
 
 static Cell *read_quote(Cell *ctx, int c) {
-    gc_var1(cell);
-    cell = read_cell(ctx);
-    if (cell == CELL_EOF || is_exception(cell))
-        return cell;
-    gc_preserve1(ctx, cell);
-    cell = cons(ctx, ctx_quote(ctx), cons(ctx, cell, CELL_NIL));
+    gc_var2(c1, c2);
+    c1 = read_cell(ctx);
+    if (c1 == CELL_EOF || is_exception(c1))
+        return c1;
+    gc_preserve2(ctx, c1, c2);
+    c1 = cons(ctx, ctx_quote(ctx), c2 = cons(ctx, c1, CELL_NIL));
     gc_release(ctx);
-    return cell;
+    return c1;
 }
 
 static Cell *read_quasiquote(Cell *ctx, int c) {
-    gc_var1(cell);
-    cell = read_cell(ctx);
-    if (cell == CELL_EOF || is_exception(cell))
-        return cell;
-    gc_preserve1(ctx, cell);
-    cell = cons(ctx, ctx_quasiquote(ctx), cons(ctx, cell, CELL_NIL));
+    gc_var2(c1, c2);
+    c1 = read_cell(ctx);
+    if (c1 == CELL_EOF || is_exception(c1))
+        return c1;
+    gc_preserve2(ctx, c1, c2);
+    c1 = cons(ctx, ctx_quasiquote(ctx), c2 = cons(ctx, c1, CELL_NIL));
     gc_release(ctx);
-    return cell;
+    return c1;
 }
 
 static Cell *read_unquote(Cell *ctx, int c) {
-    gc_var1(cell);
-    cell = read_cell(ctx);
-    if (cell == CELL_EOF || is_exception(cell))
-        return cell;
-    gc_preserve1(ctx, cell);
-    cell = cons(ctx, ctx_unquote(ctx), cons(ctx, cell, CELL_NIL));
+    gc_var2(c1, c2);
+    c1 = read_cell(ctx);
+    if (c1 == CELL_EOF || is_exception(c1))
+        return c1;
+    gc_preserve2(ctx, c1, c2);
+    c1 = cons(ctx, ctx_unquote(ctx), c2 = cons(ctx, c1, CELL_NIL));
     gc_release(ctx);
-    return cell;
+    return c1;
 }
 
 static Cell *read_unquote_splicing(Cell *ctx, int c) {
-    gc_var1(cell);
-    cell = read_cell(ctx);
-    if (cell == CELL_EOF || is_exception(cell))
-        return cell;
-    gc_preserve1(ctx, cell);
-    cell = cons(ctx, ctx_unquote_splicing(ctx), cons(ctx, cell, CELL_NIL));
+    gc_var2(c1, c2);
+    c1 = read_cell(ctx);
+    if (c1 == CELL_EOF || is_exception(c1))
+        return c1;
+    gc_preserve2(ctx, c1, c2);
+    c1 = cons(ctx, ctx_unquote_splicing(ctx), c2 = cons(ctx, c1, CELL_NIL));
     gc_release(ctx);
-    return cell;
+    return c1;
 }
 
 static Cell *read_vector(Cell *ctx, int c) {
@@ -2227,7 +2235,10 @@ Cell *syntax_pattern_match(Cell *ctx, Cell *mt, Cell *expr, Cell *expr_env, Cell
         gc_var2(rt, tmp);
         gc_preserve2(ctx, rt, tmp);
         if (matcher_repeat(mt)) {
-            if (!is_pair(expr)) return expr;
+            if (!is_pair(expr)) {
+                gc_release(ctx);
+                return expr;
+            }
             rt = cons(ctx, CELL_NIL, CELL_NIL);
             while (is_pair(expr)) {
                 list_add(ctx, rt, car(expr));
@@ -2235,8 +2246,10 @@ Cell *syntax_pattern_match(Cell *ctx, Cell *mt, Cell *expr, Cell *expr_env, Cell
             }
             rt = cdr(rt);
         } else {
-            if (!is_pair(expr))
+            if (!is_pair(expr)) {
+                gc_release(ctx);
                 return CELL_ERR;
+            }
             rt = car(expr);
             expr = cdr(expr);
         }
@@ -2406,7 +2419,7 @@ static Cell *_syntax_pattern_analyze(Cell *ctx, Cell *lit, Cell *pat, Cell *syn_
         }
         if (!is_nil(pat)) {
             sub = _syntax_pattern_analyze(ctx, lit, pat, syn_env, pat_vars);
-            sequence_matcher_add(ctx, mt, mk_rest_matcher(ctx, sub));
+            sequence_matcher_add(ctx, mt, sub = mk_rest_matcher(ctx, sub));
         }
         gc_release(ctx);
         return mt;
@@ -2488,6 +2501,7 @@ static Cell *syntax_matcher_analyze(Cell *ctx, Cell *lit, Cell *matches, Cell *s
         macher = cons(ctx, pattern, tmpl);
         list_add(ctx, machers, macher);
     }
+    gc_release(ctx);
     gc_preserve7(ctx, machers, t1, t2, t3, t4, t5, t6);
     t7 = mk_proc(ctx, CELL_NIL, t1=mk_closure(ctx, t2=cons(ctx, CELL_NIL, t3=cons(ctx, t4=cons(ctx, ctx_quote(ctx), t5=cons(ctx, machers, CELL_NIL)), CELL_NIL)), t6=cons(ctx, CELL_NIL, cdr(syn_env))));
     gc_release(ctx);
@@ -2506,13 +2520,18 @@ static Cell *syntax_transform(Cell *ctx, Cell *machers, Cell *syn_env, Cell *exp
             break;
     }
     if (is_pair(ls) && is_pair(car(ls))) tmpl = cdar(ls);
-    if (!tmpl) return mk_exception(ctx, SyntaxError, mk_string(ctx, "unmatched pattern"), NULL, NULL);
+    if (!tmpl) {
+        gc_release(ctx);
+        return mk_exception(ctx, SyntaxError, mk_string(ctx, "unmatched pattern"), NULL, NULL);
+    }
     #ifdef MACRO_DEBUG
     write_string(ctx, ctx_outport(ctx), "\n*Macro match dict*\n");
     print_cell(ctx, ctx_outport(ctx), cdr(md));
     write_char(ctx, ctx_outport(ctx), '\n');
     #endif
-    return syntax_template_expand(ctx, tmpl, cdr(md), expr_env, tmp = cons(ctx, CELL_NIL, CELL_NIL));
+    tmpl = syntax_template_expand(ctx, tmpl, cdr(md), expr_env, tmp = cons(ctx, CELL_NIL, CELL_NIL));
+    gc_release(ctx);
+    return tmpl;
 }
 /******************** macro end *********************/
 

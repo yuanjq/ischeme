@@ -741,6 +741,7 @@ static void list_extend(Cell *ctx, Cell *ls, Cell *c) {
         if (cdr(ls) == CELL_NIL) {
             if (is_pair(c)) {
                 gc_var2(d, e);
+                gc_preserve2(ctx, d, e);
                 d = e = cons(ctx, CELL_NIL, CELL_NIL);
                 for (;; c=cdr(c)) {
                     e = rplacd(e, cons(ctx, car(c), CELL_NIL));
@@ -1257,7 +1258,9 @@ static Cell *mk_double(Cell *ctx, double d) {
 static Cell *mk_fraction(Cell *ctx, long nr, long dr) {
     char s = 1;
     long gcd = num_gcd(nr, dr);
-    Cell *num = number_new(ctx);
+    gc_var1(num);
+    gc_preserve1(ctx, num);
+    num = number_new(ctx);
     if (num) {
         if (dr < 0) s = -1;
         number_type(num) = NUMBER_FRACTION;
@@ -1273,6 +1276,7 @@ static Cell *mk_fraction(Cell *ctx, long nr, long dr) {
             number_long(number_fn_dr(num)) = s * dr / gcd;
         }
     }
+    gc_release(ctx);
     return num;
 }
 
@@ -2462,7 +2466,7 @@ Cell *syntax_template_analyze(Cell *ctx, Cell *tmpl, Cell *pat_vars) {
             sequence_expander_add(ctx, seq, sub);
         }
         if (!is_nil(tmpl)) {
-            Cell *sub = syntax_template_analyze(ctx, tmpl, pat_vars);
+            sub = syntax_template_analyze(ctx, tmpl, pat_vars);
             sequence_expander_add(ctx, seq, sub);
         }
         gc_release(ctx);

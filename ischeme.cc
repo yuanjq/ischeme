@@ -468,9 +468,12 @@ static int skip_space(Cell *ctx) {
 }
 
 static Cell *reverse(Cell *ctx, Cell *old) {
-    Cell *ret = CELL_NIL;
+    gc_var1(ret);
+    gc_preserve1(ctx, ret);
+    ret = CELL_NIL;
     for (; is_pair(old); old = cdr(old))
         ret = cons(ctx, car(old), ret);
+    gc_release(ctx);
     return ret;
 }
 

@@ -2,7 +2,7 @@
 #include "cell.h"
 #include "ischeme.h"
 
-#define GC_DEBUG
+//#define GC_DEBUG
 #define is_valid_object(c)          (c && (c)->ptrtag == POINTER_TAG)
 #define is_marked(c)                cell_markedp(c)
 

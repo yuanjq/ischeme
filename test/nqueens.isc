@@ -66,4 +66,4 @@
     (newline)
     (map println res)))
 
-(display-queens 7)
+(display-queens 8)

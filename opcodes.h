@@ -54,8 +54,9 @@ _OPCODE("unquote-splicing",               SYNTAX,     OP_UNQUOTE_SPLICING,      
 _OPCODE("delay",                          SYNTAX,     OP_DELAY,                   0,  0,  0)
 
 _OPCODE("map",                            IPROC,      OP_MAP,                     2,  0xFFFF,  T_PROC T_LIST)
-_OPCODE(NULL,                             0,          OP_MAP1,             0,  0,  0)
-_OPCODE("for-each",                       IPROC,      OP_FOREACH,                 0,  0,  0)
+_OPCODE(NULL,                             0,          OP_MAP1,                    0,  0,  0)
+_OPCODE("for-each",                       IPROC,      OP_FOREACH,                 2,  0xFFFF,  T_PROC T_LIST)
+_OPCODE(NULL,                             0,          OP_FOREACH1,                0,  0,  0)
 _OPCODE("eval",                           IPROC,      OP_PEVAL,                   1,  2,  0)
 _OPCODE("apply",                          IPROC,      OP_PAPPLY,                  2,  0xFFFF,  T_PROC T_ANY)
 _OPCODE("force",                          IPROC,      OP_FORCE,                   0,  0,  0)

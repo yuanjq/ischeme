@@ -11,7 +11,7 @@ OBJ_DIR = .obj
 OBJ = $(SRC:%.cc=$(OBJ_DIR)/%.o)
 DEP = $(SRC:%.cc=$(OBJ_DIR)/%.d)
 
-.PHONY: all clean install
+.PHONY: all clean install test yinyang nqueens
 all: $(TARGET) $(TARGET_SO)
 $(TARGET): $(OBJ)
 	$(CXX) -o $@ $^ $(LDFLAGS)

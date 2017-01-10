@@ -3296,7 +3296,8 @@ Loop:
         gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "unquote-splicing: not in quasiquote"), NULL, NULL));
 
 /************* core proc **************/
-    case OP_MAP: {
+    case OP_MAP:
+    case OP_FOREACH: {
         c = car(ctx_args(ctx));
         d = cdr(ctx_args(ctx));
         int min_args, max_args;
@@ -3340,13 +3341,20 @@ Loop:
                 }
             }
             e = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
-            pushOpEx(ctx, OP_MAP1, CELL_NIL, b, c, e);
+            if (op == OP_MAP) {
+                pushOpEx(ctx, OP_MAP1, CELL_NIL, b, c, e);
+            } else {
+                pushOpEx(ctx, OP_FOREACH1, CELL_NIL, b, c, e);
+            }
             gotoOpEx(ctx, OP_APPLY, a, c, CELL_NIL, e);
         }
         popOp(ctx, CELL_NIL);
     }
     case OP_MAP1:
-        ctx_args(ctx) = cons(ctx, ctx_ret(ctx), ctx_args(ctx));
+    case OP_FOREACH1:
+        if (op == OP_MAP1) {
+            ctx_args(ctx) = cons(ctx, ctx_ret(ctx), ctx_args(ctx));
+        }
         c = ctx_code(ctx);
         if (is_pair(c)) {
             int n = length(car(c));
@@ -3360,10 +3368,13 @@ Loop:
                 list_add(ctx, d, caar(ls));
                 if (n > 1) list_add(ctx, e, cdar(ls));
             }
-            pushOpEx(ctx, OP_MAP1, ctx_args(ctx), e, ctx_data(ctx), ctx_env(ctx));
+            pushOpEx(ctx, Op(op), ctx_args(ctx), e, ctx_data(ctx), ctx_env(ctx));
             gotoOpEx(ctx, OP_APPLY, d, ctx_data(ctx), CELL_NIL, ctx_env(ctx));
         }
-        popOp(ctx, reverse(ctx, ctx_args(ctx)));
+        if (op == OP_MAP1) {
+            popOp(ctx, reverse(ctx, ctx_args(ctx)));
+        }
+        popOp(ctx, CELL_UNDEF);
     case OP_PEVAL:
         c = car(ctx_args(ctx));
         gotoOpEx(ctx, OP_EVAL, CELL_NIL, c, CELL_NIL, ctx_env(ctx));

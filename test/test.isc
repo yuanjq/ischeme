@@ -212,3 +212,16 @@
                             (vector-set! v i (* i i)))
                             '(0 1 2 3 4))
                         v))
+
+;; force delay
+(begin
+    (define count 5)
+    (define proms (delay (begin (set! count (+ count 1))
+                            (if (> count x)
+                                count
+                                (force proms)))))
+    (let ((x 5))
+        (test 6 (force proms)))
+    (let ((x 10))
+        (test 6 (force proms)))
+    )

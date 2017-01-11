@@ -83,6 +83,7 @@ typedef unsigned long           ulong;
 #define exception_new(c)        cell_new(c, excpt, EXCEPTION)
 #define matcher_new(c)          cell_new(c, mt, MATCHER)
 #define expander_new(c)         cell_new(c, expd, EXPANDER)
+#define promise_new(c)          cell_new(c, proms, PROMISE)
 
 #define cell_type(c)            (c->t)
 #define syntax_op(c)            (c->op)
@@ -150,6 +151,9 @@ typedef unsigned long           ulong;
 #define expander_n(e)           (cell_field(e,expd,n))
 #define expander_name(e)        (cell_field(e,expd,name))
 #define expander_value(e)       (cell_field(e,expd,value))
+
+#define promise_result(p)       (cell_field(p,proms,ret))
+#define promise_expr(p)         (cell_field(p,proms,expr))
 
 #define ctx_segments(c)         (cell_field(c,ctx,segments))
 #define ctx_global_env(c)       (cell_field(c,ctx,global_env))
@@ -413,6 +417,11 @@ struct Macro {
     Cell *env;
 };
 
+struct Promise {
+    Cell *ret;
+    Cell *expr;
+};
+
 struct Cell {
     Cell() {};
     ~Cell() {};
@@ -439,6 +448,7 @@ struct Cell {
         Expander    expd;
         Macro       macro;
         ClosureExpr closexpr;
+        Promise     proms;
     };
 };
 
@@ -468,6 +478,7 @@ struct OpCode {
 #define T_PORT      	"\017"
 #define T_INPORT    	"\020"
 #define T_OUTPORT   	"\021"
+#define T_PROMISE       "\022"
 
 #define car(c)      	((c) && T(c) == PAIR ? (c)->pair.a : NULL)
 #define cdr(c)      	((c) && T(c) == PAIR ? (c)->pair.d : NULL)

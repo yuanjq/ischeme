@@ -216,6 +216,15 @@ static Cell *mk_macro(Cell *ctx, Cell *mchs, Cell *env) {
     return c;
 }
 
+static Cell *mk_promise(Cell *ctx, Cell *expr) {
+    Cell *c = promise_new(ctx);
+    if (c) {
+        promise_result(c) = NULL;
+        promise_expr(c) = expr;
+    }
+    return c;
+}
+
 static Cell *mk_port(Cell *ctx, FILE *f, const char *name, int t) {
     gc_var1(c);
     c = port_new(ctx);
@@ -1128,6 +1137,8 @@ static void write_cell(Cell *ctx, Cell *port, Cell *c, bool readable, bool more,
     } else if (is_closure_expr(c)) {
         write_cell(ctx, port, closure_expr_expr(c), readable, more, top);
         return;
+    } else if (is_promise(c)) {
+        snprintf(s, STR_BUF_SIZE, "#<PROMISE:%p>", c);
     } else {
         snprintf(s, STR_BUF_SIZE, "unknown:%p", c);
     }
@@ -2786,7 +2797,7 @@ Loop:
             popOp(ctx, ctx_args(ctx) != CELL_NIL ? car(ctx_args(ctx)) : CELL_NIL);
         }
         gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "illegal procedure: "), ctx_code(ctx), NULL));
-     case OP_EVAL_LIST:
+    case OP_EVAL_LIST:
         if (is_pair(ctx_code(ctx))) {
             if (!is_nil(cdr(ctx_code(ctx)))) {
                 pushOp(ctx, OP_EVAL_LIST, CELL_NIL, cdr(ctx_code(ctx)));
@@ -2796,7 +2807,7 @@ Loop:
         } else {
             gotoOp(ctx, OP_EVAL);
         }
-     case OP_CALLCC:
+    case OP_CALLCC:
         c = proc_closure(car(ctx_args(ctx)));
         if (length(closure_args(c)) != 1) {
             gotoErr(ctx, mk_exception(ctx, TypeError, mk_string(ctx, "invalid number of arguments to procedure at #<PROCEDURE call-with-current-continuation>"), NULL, NULL));
@@ -2804,6 +2815,18 @@ Loop:
         ctx_code(ctx) = c;
         ctx_args(ctx) = cons(ctx, ctx_continue(ctx), CELL_NIL);
         gotoOp(ctx, OP_APPLY);
+    case OP_FORCE:
+        c = car(ctx_args(ctx));
+        if (promise_result(c)) {
+            popOp(ctx, promise_result(c));
+        }
+        pushOpEx(ctx, OP_FORCE1, CELL_NIL, CELL_NIL, c, ctx_env(ctx));
+        gotoOpEx(ctx, OP_EVAL, CELL_NIL, promise_expr(c), CELL_NIL, ctx_env(ctx));
+    case OP_FORCE1:
+        c = ctx_ret(ctx);
+        d = ctx_data(ctx);
+        promise_result(d) = c;
+        popOp(ctx, c);
     case OP_AND:
     case OP_OR:
         a = ctx_code(ctx);
@@ -3294,6 +3317,8 @@ Loop:
         gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "unquote: not in quasiquote"), NULL, NULL));
     case OP_UNQUOTE_SPLICING:
         gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "unquote-splicing: not in quasiquote"), NULL, NULL));
+    case OP_DELAY:
+        popOp(ctx, mk_promise(ctx, car(ctx_code(ctx))));
 
 /************* core proc **************/
     case OP_MAP:
@@ -3737,6 +3762,7 @@ def_func(is_continue)
 def_func(is_port)
 def_func(is_inport)
 def_func(is_outport)
+def_func(is_promise)
 #undef def_func
 
 static struct {
@@ -3760,6 +3786,7 @@ static struct {
     {is_port_f,     "port"},
     {is_inport_f,   "input port"},
     {is_outport_f,  "output port"},
+    {is_promise_f,  "promise"},
 };
 
 static Cell *arg_type_check(Cell *ctx) {

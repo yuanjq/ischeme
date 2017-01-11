@@ -2613,7 +2613,7 @@ Loop:
             e = cdr(c);
             for (; is_pair(d); d = car(d)) {
                 c = car(d);
-                e = cons(ctx, ctx_lambda(ctx), cons(ctx, cdr(d), e));
+                e = cons(ctx, ctx_lambda(ctx), f = cons(ctx, cdr(d), e));
             }
             ctx_code(ctx) = e;
         } else if (is_symbol(car(c))) {
@@ -2678,7 +2678,7 @@ Loop:
         }
         popOp(ctx, c);
     case OP_LAMBDA:
-        popOp(ctx, mk_proc(ctx, CELL_NIL, mk_closure(ctx, ctx_code(ctx), ctx_env(ctx))));
+        popOp(ctx, mk_proc(ctx, CELL_NIL, c = mk_closure(ctx, ctx_code(ctx), ctx_env(ctx))));
     case OP_EVAL:
         if (is_nil(ctx_code(ctx))) {
             gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "illegal empty expresion"), NULL, NULL));
@@ -2720,7 +2720,7 @@ Loop:
                         print_cell(ctx, ctx_outport(ctx), ctx_code(ctx));
                         write_char(ctx, ctx_outport(ctx), '\n');
                         #endif
-                        ctx_code(ctx) = mk_closure(ctx, cons(ctx, CELL_NIL, ctx_code(ctx)), macro_env(c));
+                        ctx_code(ctx) = mk_closure(ctx, d = cons(ctx, CELL_NIL, ctx_code(ctx)), macro_env(c));
                         ctx_args(ctx) = CELL_NIL;
                         gotoOp(ctx, OP_APPLY);
                     }
@@ -2813,7 +2813,7 @@ Loop:
             }
             popOp(ctx, CELL_FALSE);
         }
-        pushOp(ctx, OP_ANDOR, mk_long(ctx, op), cdr(a));
+        pushOp(ctx, OP_ANDOR, b = mk_long(ctx, op), cdr(a));
         ctx_code(ctx) = car(a);
         gotoOp(ctx, OP_EVAL);
     case OP_ANDOR:
@@ -3000,7 +3000,7 @@ Loop:
         for (Cell *ls=car(c); is_pair(ls); ls=cdr(ls)) {
             a = car(ls);
             if (is_pair(cddr(a))) {
-                list_add(ctx, b, cons(ctx, car(a), caddr(a)));
+                list_add(ctx, b, d = cons(ctx, car(a), caddr(a)));
             }
         }
         gotoOpEx(ctx, OP_DO2, cdr(b), c, CELL_NIL, e);
@@ -3080,7 +3080,7 @@ Loop:
             for (c = cadr(ctx_code(ctx)), ctx_args(ctx) = CELL_NIL; !is_nil(c); c = cdr(c)) {
                 ctx_args(ctx) = cons(ctx, caar(c), ctx_args(ctx));
             }
-            c = mk_closure(ctx, cons(ctx, reverse(ctx, ctx_args(ctx)), cddr(ctx_code(ctx))), ctx_env(ctx));
+            c = mk_closure(ctx, e = cons(ctx, f = reverse(ctx, ctx_args(ctx)), cddr(ctx_code(ctx))), ctx_env(ctx));
             ctx_env(ctx) = closure_env(c);
             mk_env(ctx, ctx_env(ctx), car(ctx_code(ctx)), c);
             ctx_code(ctx) = cddr(ctx_code(ctx));
@@ -3166,7 +3166,7 @@ Loop:
     case OP_LETREC_SYNTAX:
         c = car(ctx_code(ctx));
         d = cdr(ctx_code(ctx));
-        e = cons(ctx, mk_long(ctx, op), cdr(ctx_env(ctx)));
+        e = cons(ctx, f = mk_long(ctx, op), cdr(ctx_env(ctx)));
         if (is_pair(c)) {
             const char *opn = (op == OP_LET_SYNTAX) ? "let-syntax" : "letrec-syntax";
             b = cons(ctx, CELL_NIL, CELL_NIL);
@@ -3212,10 +3212,10 @@ Loop:
         }
         if (op == OP_LETREC_SYNTAX) {
             for (Cell *ls=b; is_pair(ls); ls=cdr(ls)) {
-                set_env(ctx, e, car(ls), mk_macro(ctx, cdr(a), car(a)));
+                set_env(ctx, e, car(ls), f = mk_macro(ctx, cdr(a), car(a)));
             }
         } else {
-            list_add(ctx, d, mk_macro(ctx, cdr(a), car(a)));
+            list_add(ctx, d, f = mk_macro(ctx, cdr(a), car(a)));
         }
         if (is_pair(c)) {
             pushOpEx(ctx, OP_LET_SYNTAX1, b, cdr(c), d, e);
@@ -3233,7 +3233,7 @@ Loop:
     case OP_QUOTE:
         popOp(ctx, car(ctx_code(ctx)));
     case OP_QUASIQUOTE:
-        ctx_code(ctx) = cons(ctx, mk_long(ctx, 1), car(ctx_code(ctx)));
+        ctx_code(ctx) = cons(ctx, c = mk_long(ctx, 1), car(ctx_code(ctx)));
         gotoOp(ctx, OP_QUASIQUOTE1);
     case OP_QUASIQUOTE1:
         c = cdr(ctx_code(ctx));
@@ -3255,7 +3255,7 @@ Loop:
             if (lv != number_long(d)) {
                 d = mk_long(ctx, lv);
             }
-            pushOp(ctx, OP_QUASIQUOTE3, CELL_NIL, cons(ctx, d, cdr(c)));
+            pushOp(ctx, OP_QUASIQUOTE3, CELL_NIL, f = cons(ctx, d, cdr(c)));
             ctx_code(ctx) = cons(ctx, d, car(c));
             gotoOp(ctx, OP_QUASIQUOTE1);
         }
@@ -3286,7 +3286,7 @@ Loop:
             }
             popOp(ctx, reverse(ctx, ctx_args(ctx)));
         }
-        pushOp(ctx, OP_QUASIQUOTE3, ctx_args(ctx), cons(ctx, d, cdr(c)));
+        pushOp(ctx, OP_QUASIQUOTE3, ctx_args(ctx), f = cons(ctx, d, cdr(c)));
         ctx_args(ctx) = CELL_NIL;
         ctx_code(ctx) = cons(ctx, d, car(c));
         gotoOp(ctx, OP_QUASIQUOTE1);

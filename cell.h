@@ -68,7 +68,6 @@ typedef unsigned long           ulong;
 
 #define syntax_new(c)           cell_new(c, op, SYNTAX)
 #define iproc_new(c)            cell_new(c, op, IPROC)
-#define macro_new(c)            cell_new(c, op, MACRO)
 #define char_new(c)             cell_new(c, chr, CHAR)
 #define symbol_new(c)           cell_new(c, str, SYMBOL)
 #define number_new(c)           cell_new(c, num, NUMBER)
@@ -77,6 +76,7 @@ typedef unsigned long           ulong;
 #define instruct_new(c)         cell_new(c, inst, INSTRUCT)
 #define procedure_new(c)        cell_new(c, eproc, EPROC)
 #define closure_new(c)          cell_new(c, clos, CLOSURE)
+#define macro_new(c)            cell_new(c, macro, MACRO)
 #define closure_expr_new(c)     cell_new(c, closexpr, CLOSURE_EXPR);
 #define proc_new(c)             cell_new(c, proc, PROC)
 #define context_new(c)          cell_new(c, ctx, CONTEXT)

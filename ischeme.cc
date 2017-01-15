@@ -102,6 +102,12 @@ static bool is_list(Cell *c) {
     return FALSE;
 }
 
+static uint length(Cell *list) {
+    uint len = 0;
+    for (; is_pair(list); list = cdr(list)) ++len;
+    return len;
+}
+
 static Cell *mk_bool(bool b) {
     if (b)
         return CELL_TRUE;
@@ -263,6 +269,15 @@ static Cell *mk_continue(Cell *ctx, Cell *c) {
     c = cons(ctx, c, ctx_continue(ctx));
     if (c) cell_type(c) = CONTINUE;
     return c;
+}
+
+static Cell *mk_multival(Cell *ctx, Cell *c) {
+    Cell *var = multivar_new(ctx);
+    if (var) {
+        multivar_n(var) = length(c);
+        multivar_var(var) = c;
+    }
+    return var;
 }
 
 #define mk_exception(c,t,msg,trg,src)   ({ \
@@ -830,12 +845,6 @@ static void alist_append(Cell *ctx, Cell *ls, Cell *pair) {
     }
 }
 
-static uint length(Cell *list) {
-    uint len = 0;
-    for (; is_pair(list); list = cdr(list)) ++len;
-    return len;
-}
-
 static Cell *set_env(Cell *ctx, Cell *env, Cell *s, Cell *v) {
     gc_var1(e);
     gc_preserve1(ctx, e);
@@ -1139,6 +1148,16 @@ static void write_cell(Cell *ctx, Cell *port, Cell *c, bool readable, bool more,
         return;
     } else if (is_promise(c)) {
         snprintf(s, STR_BUF_SIZE, "#<PROMISE:%p>", c);
+    } else if (is_multivar(c)) {
+        write_string(ctx, port, "#<MULTIVAR:");
+        for (Cell *ls=multivar_var(c); is_pair(ls);) {
+            write_cell(ctx, port, car(ls), readable, more, top);
+            ls = cdr(ls);
+            if (is_pair(ls)) {
+                write_char(ctx, port, ' ');
+            }
+        }
+        write_char(ctx, port, '>');
     } else {
         snprintf(s, STR_BUF_SIZE, "unknown:%p", c);
     }
@@ -2601,13 +2620,19 @@ Loop:
         pushOp(ctx, OP_REPL_PRINT, CELL_NIL, CELL_NIL);
         gotoOp(ctx, OP_EVAL);
     case OP_REPL_PRINT:
+        c = ctx_ret(ctx);
         if (is_interactive(ctx)) {
-            if (ctx_ret(ctx) != CELL_UNDEF) {
-                print_cell(ctx, ctx_outport(ctx), ctx_ret(ctx));
+            if (is_multivar(c)) {
+                for (Cell *ls=multivar_var(c); is_pair(ls); ls=cdr(ls)) {
+                    print_cell(ctx, ctx_outport(ctx), car(ls));
+                    write_string(ctx, ctx_outport(ctx), "\n");
+                }
+            } else if (!is_undef(c)) {
+                print_cell(ctx, ctx_outport(ctx), c);
                 write_string(ctx, ctx_outport(ctx), "\n");
             }
         }
-        popOp(ctx, ctx_ret(ctx));
+        popOp(ctx, c);
     case OP_ERROR:
         print_cell(ctx, ctx_outport(ctx), ctx_ret(ctx));
         if (is_interactive(ctx)) {
@@ -2793,8 +2818,12 @@ Loop:
             ctx_env(ctx) = e;
             gotoOp(ctx, OP_EVAL_LIST);
         } else if (is_continue(ctx_code(ctx))) {
-            ctx_continue(ctx) = cons(ctx, continue_car(ctx_code(ctx)), continue_cdr(ctx_code(ctx)));            
-            popOp(ctx, ctx_args(ctx) != CELL_NIL ? car(ctx_args(ctx)) : CELL_NIL);
+            ctx_continue(ctx) = ctx_code(ctx);
+            a = ctx_args(ctx);
+            if (is_pair(a) && length(a) == 1) {
+                popOp(ctx, car(a));
+            }
+            popOp(ctx, mk_multival(ctx, a));
         }
         gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "illegal procedure: "), ctx_code(ctx), NULL));
     case OP_EVAL_LIST:
@@ -2815,6 +2844,23 @@ Loop:
         ctx_code(ctx) = c;
         ctx_args(ctx) = cons(ctx, ctx_continue(ctx), CELL_NIL);
         gotoOp(ctx, OP_APPLY);
+    case OP_VALUES:
+        popOp(ctx, mk_multival(ctx, ctx_args(ctx)));
+    case OP_CALL_WITH_VALUES:
+        a = ctx_args(ctx);
+        pushOp(ctx, OP_CALL_WITH_VALUES1, CELL_NIL, cadr(a));
+        gotoOpEx(ctx, OP_APPLY, CELL_NIL, car(a), CELL_NIL, ctx_env(ctx));
+    case OP_CALL_WITH_VALUES1:
+        d = ctx_ret(ctx);
+        if (is_multivar(d)) {
+            d = multivar_var(d);
+        } else {
+            d = cons(ctx, d, CELL_NIL);
+        }
+        gotoOpEx(ctx, OP_APPLY, d, ctx_code(ctx), CELL_NIL, ctx_env(ctx));
+    case OP_DYNAMIC_WIND:
+        // TODO:
+        break;
     case OP_FORCE:
         c = car(ctx_args(ctx));
         if (promise_result(c)) {
@@ -3406,6 +3452,10 @@ Loop:
     case OP_PAPPLY:
         c = car(ctx_args(ctx));
         d = cdr(ctx_args(ctx));
+        if (!is_proc(c) && !is_continue(c)) {
+            gotoErr(ctx, mk_exception(ctx, TypeError,
+                    mk_string(ctx, "apply: unmatched type of argument 1, muset be precedure"), NULL, NULL));
+        }
         if (is_nil(cdr(d))) {
             if (!is_pair(car(d))) {
                 gotoErr(ctx, mk_exception(ctx, TypeError, mk_string(ctx, "invalid arguments"), NULL, NULL));

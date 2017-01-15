@@ -84,6 +84,7 @@ typedef unsigned long           ulong;
 #define matcher_new(c)          cell_new(c, mt, MATCHER)
 #define expander_new(c)         cell_new(c, expd, EXPANDER)
 #define promise_new(c)          cell_new(c, proms, PROMISE)
+#define multivar_new(c)         cell_new(c, multiv, MULTIVAR)
 
 #define cell_type(c)            (c->t)
 #define syntax_op(c)            (c->op)
@@ -155,6 +156,9 @@ typedef unsigned long           ulong;
 #define promise_result(p)       (cell_field(p,proms,ret))
 #define promise_expr(p)         (cell_field(p,proms,expr))
 
+#define multivar_n(v)           (cell_field(v,multiv,n))
+#define multivar_var(v)         (cell_field(v,multiv,var))
+
 #define ctx_segments(c)         (cell_field(c,ctx,segments))
 #define ctx_global_env(c)       (cell_field(c,ctx,global_env))
 #define ctx_symbols(c)          (cell_field(c,ctx,symbols))
@@ -206,6 +210,7 @@ enum Type {
     CONTINUE,
     ENVIR,
     PROMISE,
+    MULTIVAR,
     EXCEPTION,
 };
 
@@ -422,6 +427,11 @@ struct Promise {
     Cell *expr;
 };
 
+struct MultiVar {
+    uint n;
+    Cell *var;
+};
+
 struct Cell {
     Cell() {};
     ~Cell() {};
@@ -449,6 +459,7 @@ struct Cell {
         Macro       macro;
         ClosureExpr closexpr;
         Promise     proms;
+        MultiVar    multiv;
     };
 };
 
@@ -528,6 +539,7 @@ struct OpCode {
 #define is_instruct(c) 	((c) && T(c) == INSTRUCT)
 #define is_continue(c) 	((c) && T(c) == CONTINUE)
 #define is_exception(c) ((c) && T(c) == EXCEPTION)
+#define is_multivar(c)  ((c) && T(c) == MULTIVAR)
 #define is_port_eof(c) 	((c) && T(c) == PORT && ((port_type(c) & PORT_FILE) && feof(port_file(c)) || (port_type(c) & PORT_STRING) && port_string_pos(c) == port_string_end(c)))
 #define is_immutable(c) ((c) && cell_type(c) & M_IMMUTABLE)
 #define is_interactive(ctx) (port_type(ctx_inports_head(ctx)) & PORT_FILE && port_file(ctx_inports_head(ctx)) == stdin)

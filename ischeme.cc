@@ -265,9 +265,12 @@ static Cell *mk_syntax(Cell *ctx, int op) {
     return c;
 }
 
-static Cell *mk_continue(Cell *ctx, Cell *c) {
-    c = cons(ctx, c, ctx_continue(ctx));
-    if (c) cell_type(c) = CONTINUE;
+static Cell *mk_continue(Cell *ctx, Cell *ins, Cell *winds) {
+    Cell *c = continue_new(ctx);
+    if (c) {
+        continue_ins(c) = ins;
+        continue_winds(c) = winds;
+    }
     return c;
 }
 
@@ -313,8 +316,8 @@ static void print_err(Cell *ctx, char *etype, char *ebody, ...) {
 }
 
 static inline bool pop_op(Cell *ctx, Cell *v) {
-    Cell *cont = ctx_continue(ctx);
-    Cell *inst = continue_car(cont);
+    Cell *insts = ctx_instructs(ctx);
+    Cell *inst = car(insts);
     if (!is_instruct(inst)) {
         return FALSE;
     }
@@ -324,7 +327,7 @@ static inline bool pop_op(Cell *ctx, Cell *v) {
     ctx_code(ctx) = instruct_code(inst);
     ctx_data(ctx) = instruct_data(inst);
     ctx_env(ctx) = instruct_env(inst);
-    ctx_continue(ctx) = continue_cdr(cont);
+    ctx_instructs(ctx) = cdr(insts);
     return TRUE;
 }
 
@@ -338,7 +341,7 @@ static void push_op(Cell *ctx, Op op, Cell *args, Cell *code, Cell *data, Cell *
         instruct_code(c) = code;
         instruct_data(c) = data;
         instruct_env(c) = env;
-        ctx_continue(ctx) = mk_continue(ctx, c);
+        ctx_instructs(ctx) = cons(ctx, c, ctx_instructs(ctx));
         gc_release(ctx);
     }
 }
@@ -2593,7 +2596,7 @@ Loop:
             popOp(ctx, ctx_ret(ctx));
         }
         if (is_interactive(ctx)) {
-            ctx_continue(ctx) = CELL_NIL;
+            ctx_instructs(ctx) = CELL_NIL;
             if (ctx_inports_size(ctx) == 1) {
                 write_string(ctx, ctx_outport(ctx), ">> ");
             }
@@ -2817,9 +2820,12 @@ Loop:
             ctx_args(ctx) = CELL_NIL;
             ctx_env(ctx) = e;
             gotoOp(ctx, OP_EVAL_LIST);
-        } else if (is_continue(ctx_code(ctx))) {
-            ctx_continue(ctx) = ctx_code(ctx);
+        } else if (is_continue(c = ctx_code(ctx))) {
             a = ctx_args(ctx);
+            if (eq(ctx_winds(ctx), continue_winds(c))) {
+                // TODO
+            }
+            ctx_instructs(ctx) = continue_ins(c);
             if (is_pair(a) && length(a) == 1) {
                 popOp(ctx, car(a));
             }
@@ -2842,7 +2848,8 @@ Loop:
             gotoErr(ctx, mk_exception(ctx, TypeError, mk_string(ctx, "invalid number of arguments to procedure at #<PROCEDURE call-with-current-continuation>"), NULL, NULL));
         }
         ctx_code(ctx) = c;
-        ctx_args(ctx) = cons(ctx, ctx_continue(ctx), CELL_NIL);
+        d = mk_continue(ctx, ctx_instructs(ctx), ctx_winds(ctx));
+        ctx_args(ctx) = cons(ctx, d, CELL_NIL);
         gotoOp(ctx, OP_APPLY);
     case OP_VALUES:
         popOp(ctx, mk_multival(ctx, ctx_args(ctx)));
@@ -2859,8 +2866,22 @@ Loop:
         }
         gotoOpEx(ctx, OP_APPLY, d, ctx_code(ctx), CELL_NIL, ctx_env(ctx));
     case OP_DYNAMIC_WIND:
-        // TODO:
-        break;
+        c = car(ctx_args(ctx));
+        pushOp(ctx, OP_DYNAMIC_WIND1, ctx_args(ctx), CELL_NIL);
+        gotoOpEx(ctx, OP_APPLY, CELL_NIL, c, CELL_NIL, ctx_env(ctx));
+    case OP_DYNAMIC_WIND1:
+        a = car(ctx_args(ctx));
+        b = cadr(ctx_args(ctx));
+        c = caddr(ctx_args(ctx));
+        ctx_winds(ctx) = cons(ctx, d = cons(ctx, a, c), ctx_winds(ctx));
+        pushOp(ctx, OP_DYNAMIC_WIND2, ctx_winds(ctx), c);
+        gotoOpEx(ctx, OP_APPLY, CELL_NIL, b, CELL_NIL, ctx_env(ctx));
+    case OP_DYNAMIC_WIND2:
+        ctx_winds(ctx) = cdr(ctx_args(ctx));
+        pushOp(ctx, OP_DYNAMIC_WIND3, ctx_ret(ctx), CELL_NIL);
+        gotoOpEx(ctx, OP_APPLY, CELL_NIL, ctx_code(ctx), CELL_NIL, ctx_env(ctx));
+    case OP_DYNAMIC_WIND3:
+        popOp(ctx, ctx_args(ctx));
     case OP_FORCE:
         c = car(ctx_args(ctx));
         if (promise_result(c)) {
@@ -3986,6 +4007,9 @@ Cell *ischeme_ctx_new() {
     init_readers();
     ctx_inport(ctx) = NULL;
     ctx_outport(ctx) = mk_port(ctx, stdout, NULL, PORT_FILE | PORT_OUTPUT);
+    ctx_instructs(ctx) = CELL_NIL;
+    ctx_winds(ctx) = CELL_NIL;
+    ctx_saves(ctx) = NULL;
     ctx_lambda(ctx) = internal(ctx, "lambda");
     ctx_quote(ctx) = internal(ctx, "quote");
     ctx_unquote(ctx) = internal(ctx, "unquote");

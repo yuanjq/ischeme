@@ -181,7 +181,8 @@ static uint cell_mark(Cell *ctx, Cell *c) {
         n += cell_mark(ctx, ctx_env(c));
         n += cell_mark(ctx, ctx_code(c));
         n += cell_mark(ctx, ctx_data(c));
-        n += cell_mark(ctx, ctx_continue(c));
+        n += cell_mark(ctx, ctx_instructs(c));
+        n += cell_mark(ctx, ctx_winds(c));
         for (Preserved *saves=ctx_saves(c); saves; saves=saves->next) {
             n += cell_mark(ctx, *(saves->var));
         }
@@ -218,19 +219,8 @@ static uint cell_mark(Cell *ctx, Cell *c) {
         n += cell_mark(ctx, instruct_env(c));
         break;
     case CONTINUE:
-        for (;;) {
-            n += cell_mark(ctx, continue_car(c));
-            c = continue_cdr(c);
-            if (is_continue(c)) {
-                if (!is_marked(c)) {
-                    cell_markedp(c) = true;
-                    n += 1;
-                }
-            } else {
-                n += cell_mark(ctx, c);
-                break;
-            }
-        }
+        n += cell_mark(ctx, continue_ins(c));
+        n += cell_mark(ctx, continue_winds(c));
         break;
     case EXCEPTION:
         if (exception_msg(c)) {
@@ -243,8 +233,14 @@ static uint cell_mark(Cell *ctx, Cell *c) {
             n += cell_mark(ctx, exception_trg(c));
         }
         break;
-    case ENVIR:
     case PROMISE:
+        n += cell_mark(ctx, promise_result(c));
+        n += cell_mark(ctx, promise_expr(c));
+        break;
+    case MULTIVAR:
+        n += cell_mark(ctx, multivar_var(c));
+        break;
+    case ENVIR:
     default:
         return 0;
     }

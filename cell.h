@@ -74,6 +74,7 @@ typedef unsigned long           ulong;
 #define pair_new(c)             cell_new(c, pair, PAIR)
 #define port_new(c)             cell_new(c, port, PORT)
 #define instruct_new(c)         cell_new(c, inst, INSTRUCT)
+#define continue_new(c)         cell_new(c, cont, CONTINUE)
 #define procedure_new(c)        cell_new(c, eproc, EPROC)
 #define closure_new(c)          cell_new(c, clos, CLOSURE)
 #define macro_new(c)            cell_new(c, macro, MACRO)
@@ -125,8 +126,9 @@ typedef unsigned long           ulong;
 #define instruct_env(c)         (cell_field(c,inst,env))
 #define instruct_code(c)        (cell_field(c,inst,code))
 #define instruct_data(c)        (cell_field(c,inst,data))
-#define continue_car(c)         (c->pair.a)
-#define continue_cdr(c)         (c->pair.d)
+
+#define continue_ins(c)         (cell_field(c,cont,ins))
+#define continue_winds(c)       (cell_field(c,cont,winds))
 
 #define closure_args(c)         (cell_field(c,clos,args))
 #define closure_code(c)         (cell_field(c,clos,code))
@@ -176,8 +178,10 @@ typedef unsigned long           ulong;
 #define ctx_env(c)              (cell_field(c,ctx,env))
 #define ctx_code(c)             (cell_field(c,ctx,code))
 #define ctx_data(c)             (cell_field(c,ctx,data))
-#define ctx_continue(c)         (cell_field(c,ctx,cont))
+#define ctx_instructs(c)        (cell_field(c,ctx,ins))
+#define ctx_winds(c)            (cell_field(c,ctx,winds))
 #define ctx_saves(c)            (cell_field(c,ctx,saves))
+
 #define ctx_lambda(c)           (cell_field(c,ctx,lambda))
 #define ctx_quote(c)            (cell_field(c,ctx,quote))
 #define ctx_quasiquote(c)       (cell_field(c,ctx,qquote))
@@ -339,6 +343,11 @@ struct Instruct {
     Cell *data;
 };
 
+struct Continue {
+    Cell *ins;
+    Cell *winds;
+};
+
 struct Pair {
     Cell *a;
     Cell *d;
@@ -392,7 +401,8 @@ struct Context {
     Cell *env;
     Cell *code;
     Cell *data;
-    Cell *cont;
+    Cell *ins;
+    Cell *winds;
     Preserved *saves;
 
     Cell *lambda;
@@ -449,6 +459,7 @@ struct Cell {
         Vector      vect;
         Port        port;
         Instruct    inst;
+        Continue    cont;
         EProc       eproc;
         Closure     clos;
         Proc        proc;

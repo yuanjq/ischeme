@@ -732,11 +732,9 @@ static Cell *list_ref(Cell *ls, Cell *n) {
     return CELL_NIL;
 }
 
-static Cell *list_tail(Cell *ls) {
-    for (; is_pair(ls); ls=cdr(ls)) {
-        if (is_nil(cdr(ls))) {
-            return car(ls);
-        }
+static Cell *list_tail(Cell *ls, uint n) {
+    for (uint i=0; is_pair(ls); ls=cdr(ls), ++i) {
+        if (i == n) return ls;
     }
     return CELL_NIL;
 }
@@ -2822,8 +2820,15 @@ Loop:
             gotoOp(ctx, OP_EVAL_LIST);
         } else if (is_continue(c = ctx_code(ctx))) {
             a = ctx_args(ctx);
-            if (eq(ctx_winds(ctx), continue_winds(c))) {
-                // TODO
+            b = ctx_winds(ctx);
+            d = continue_winds(c);
+            if (!eq(b, d)) {
+                Cell *x, *y;
+                uint lb = length(b), ld = length(d);
+                lb > ld ? x = list_tail(b, lb - ld) : b;
+                ld > lb ? y = list_tail(d, ld - lb) : d;
+                for (; !eq(x, y); x=cdr(x), y=cdr(y));
+                // TODO:
             }
             ctx_instructs(ctx) = continue_ins(c);
             if (is_pair(a) && length(a) == 1) {

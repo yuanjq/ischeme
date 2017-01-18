@@ -2780,6 +2780,16 @@ Loop:
         ctx_code(ctx) = car(ctx_args(ctx));
         ctx_args(ctx) = cdr(ctx_args(ctx));
         gotoOp(ctx, OP_APPLY);
+    case OP_EVAL_LIST:
+        if (is_pair(ctx_code(ctx))) {
+            if (!is_nil(cdr(ctx_code(ctx)))) {
+                pushOp(ctx, OP_EVAL_LIST, CELL_NIL, cdr(ctx_code(ctx)));
+            }
+            ctx_code(ctx) = car(ctx_code(ctx));
+            gotoOp(ctx, OP_EVAL);
+        } else {
+            gotoOp(ctx, OP_EVAL);
+        }
     case OP_APPLY:
         if (is_syntax(ctx_code(ctx))) {
             gotoOp(ctx, syntax_op(ctx_code(ctx)));
@@ -2825,10 +2835,11 @@ Loop:
             if (!eq(b, d)) {
                 Cell *x, *y;
                 uint lb = length(b), ld = length(d);
-                lb > ld ? x = list_tail(b, lb - ld) : b;
-                ld > lb ? y = list_tail(d, ld - lb) : d;
+                x = lb > ld ? list_tail(b, lb - ld) : b;
+                y = ld > lb ? list_tail(d, ld - lb) : d;
                 for (; !eq(x, y); x=cdr(x), y=cdr(y));
-                // TODO:
+                pushOpEx(ctx, OP_APPLY_WIND3, a, c, CELL_NIL, ctx_env(ctx));
+                gotoOpEx(ctx, OP_APPLY_WIND, x, b, d, ctx_env(ctx));
             }
             ctx_instructs(ctx) = continue_ins(c);
             if (is_pair(a) && length(a) == 1) {
@@ -2837,16 +2848,35 @@ Loop:
             popOp(ctx, mk_multival(ctx, a));
         }
         gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "illegal procedure: "), ctx_code(ctx), NULL));
-    case OP_EVAL_LIST:
-        if (is_pair(ctx_code(ctx))) {
-            if (!is_nil(cdr(ctx_code(ctx)))) {
-                pushOp(ctx, OP_EVAL_LIST, CELL_NIL, cdr(ctx_code(ctx)));
-            }
-            ctx_code(ctx) = car(ctx_code(ctx));
-            gotoOp(ctx, OP_EVAL);
-        } else {
-            gotoOp(ctx, OP_EVAL);
+    case OP_APPLY_WIND:
+        a = ctx_args(ctx);
+        c = ctx_code(ctx);
+        d = ctx_data(ctx);
+        if (!eq(a, c)) {
+            pushOpEx(ctx, OP_APPLY_WIND, a, cdr(c), d, ctx_env(ctx));
+            ctx_winds(ctx) = cdr(c);
+            gotoOpEx(ctx, OP_APPLY, CELL_NIL, cdar(c), CELL_NIL, ctx_env(ctx));
         }
+        gotoOpEx(ctx, OP_APPLY_WIND1, a, d, CELL_NIL, ctx_env(ctx));
+    case OP_APPLY_WIND1:
+        a = ctx_args(ctx);
+        c = ctx_code(ctx);
+        if (!eq(a, c)) {
+            pushOpEx(ctx, OP_APPLY_WIND2, c, CELL_NIL, CELL_NIL, ctx_env(ctx));
+            pushOpEx(ctx, OP_APPLY, CELL_NIL, caar(c), CELL_NIL, ctx_env(ctx));
+            gotoOpEx(ctx, OP_APPLY_WIND1, a, cdr(c), CELL_NIL, ctx_env(ctx));
+        }
+        popOp(ctx, CELL_UNDEF);
+    case OP_APPLY_WIND2:
+        ctx_winds(ctx) = ctx_args(ctx);
+        popOp(ctx, CELL_UNDEF);
+    case OP_APPLY_WIND3:
+        a = ctx_args(ctx);
+        ctx_instructs(ctx) = continue_ins(ctx_code(ctx));
+        if (is_pair(a) && length(a) == 1) {
+            popOp(ctx, car(a));
+        }
+        popOp(ctx, mk_multival(ctx, a));
     case OP_CALLCC:
         c = proc_closure(car(ctx_args(ctx)));
         if (length(closure_args(c)) != 1) {

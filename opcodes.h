@@ -73,8 +73,8 @@ _OPCODE("dynamic-wind",                   IPROC,      OP_DYNAMIC_WIND,          
 _OPCODE(NULL,                             0,          OP_DYNAMIC_WIND1,           0,  0,  0)
 _OPCODE(NULL,                             0,          OP_DYNAMIC_WIND2,           0,  0,  0)
 _OPCODE(NULL,                             0,          OP_DYNAMIC_WIND3,           0,  0,  0)
-_OPCODE("scheme-report-environment",      IPROC,      OP_SCHEME_REPORT_ENV,       0,  0,  0)
-_OPCODE("null-environment",               IPROC,      OP_NULL_ENV,                0,  0,  0)
+_OPCODE("scheme-report-environment",      IPROC,      OP_SCHEME_REPORT_ENV,       1,  1,  T_INTEGER)
+_OPCODE("null-environment",               IPROC,      OP_NULL_ENV,                1,  1,  T_INTEGER)
 _OPCODE("interaction-environment ",       IPROC,      OP_INTERACTION_ENV,         0,  0,  0)
 
 _OPCODE("load",                           IPROC,      OP_LOAD,                    1,  1,  T_STRING)

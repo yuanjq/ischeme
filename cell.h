@@ -5,8 +5,10 @@
 #include <stddef.h>
 #include <string>
 #include <vector>
+#include <map>
 
 using std::vector;
+using std::map;
 
 #define IDEBUG_MORE
 
@@ -84,6 +86,7 @@ typedef unsigned long           ulong;
 #define exception_new(c)        cell_new(c, excpt, EXCEPTION)
 #define matcher_new(c)          cell_new(c, mt, MATCHER)
 #define expander_new(c)         cell_new(c, expd, EXPANDER)
+#define env_new(c)              cell_new(c, env, ENV)
 #define promise_new(c)          cell_new(c, proms, PROMISE)
 #define multivar_new(c)         cell_new(c, multiv, MULTIVAR)
 
@@ -155,6 +158,10 @@ typedef unsigned long           ulong;
 #define expander_name(e)        (cell_field(e,expd,name))
 #define expander_value(e)       (cell_field(e,expd,value))
 
+#define env_immtb(e)            (cell_field(e,env,immtb))
+#define env_map(e)              (cell_field(e,env,mp))
+#define env_outer(e)            (cell_field(e,env,outer))
+
 #define promise_result(p)       (cell_field(p,proms,ret))
 #define promise_expr(p)         (cell_field(p,proms,expr))
 
@@ -163,6 +170,8 @@ typedef unsigned long           ulong;
 
 #define ctx_segments(c)         (cell_field(c,ctx,segments))
 #define ctx_global_env(c)       (cell_field(c,ctx,global_env))
+#define ctx_r5rs_env(c)         (cell_field(c,ctx,r5rs_env))
+#define ctx_null_env(c)         (cell_field(c,ctx,null_env))
 #define ctx_symbols(c)          (cell_field(c,ctx,symbols))
 #define ctx_inport(c)           (cell_field(c,ctx,inport))
 #define ctx_outport(c)          (cell_field(c,ctx,outport))
@@ -212,7 +221,7 @@ enum Type {
     CLOSURE_EXPR,
     INSTRUCT,
     CONTINUE,
-    ENVIR,
+    ENV,
     PROMISE,
     MULTIVAR,
     EXCEPTION,
@@ -390,6 +399,8 @@ struct Segment;
 struct Context {
     Segment *segments;
     Cell *global_env;
+    Cell *r5rs_env;
+    Cell *null_env;
     Cell *symbols;
     Cell *inport;
     Cell *outport;
@@ -432,6 +443,18 @@ struct Macro {
     Cell *env;
 };
 
+struct ptrCmp {
+    bool operator()(const char *s1, const char *s2) const {
+        return strcmp(s1, s2) < 0;
+    }
+};
+
+struct Env {
+    bool immtb;
+    map<char*, Cell*, ptrCmp> mp;
+    Env *outer;
+};
+
 struct Promise {
     Cell *ret;
     Cell *expr;
@@ -469,6 +492,7 @@ struct Cell {
         Expander    expd;
         Macro       macro;
         ClosureExpr closexpr;
+        Env         env;
         Promise     proms;
         MultiVar    multiv;
     };
@@ -495,7 +519,7 @@ struct OpCode {
 #define T_LIST      	"\012"
 #define T_VECTOR    	"\013"
 #define T_PROC      	"\014"
-#define T_ENVIR     	"\015"
+#define T_ENV     	    "\015"
 #define T_CONTI     	"\016"
 #define T_PORT      	"\017"
 #define T_INPORT    	"\020"
@@ -541,7 +565,7 @@ struct OpCode {
 #define is_iproc(c)   	((c) && T(c) == IPROC)
 #define is_eproc(c)   	((c) && T(c) == EPROC)
 #define is_procs(c)   	((c) && T(c) == PROC || T(c) == IPROC || T(c) == EPROC)
-#define is_envir(c)   	((c) && T(c) == ENVIR)
+#define is_env(c)   	((c) && T(c) == ENV)
 #define is_macro(c)   	((c) && T(c) == MACRO)
 #define is_promise(c) 	((c) && T(c) == PROMISE)
 #define is_port(c)    	((c) && T(c) == PORT)

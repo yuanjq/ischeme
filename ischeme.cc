@@ -176,7 +176,8 @@ static Cell *mk_closure(Cell *ctx, Cell *a, Cell *e) {
     gc_preserve1(ctx, c);
     closure_args(c) = car(a);
     closure_code(c) = cdr(a);
-    closure_env(c) = cons(ctx, CELL_NIL, cdr(e));
+    //closure_env(c) = cons(ctx, CELL_NIL, cdr(e));
+    closure_env(c) = mk_env(ctx, false, e);
     gc_release(ctx);
     return c;
 }
@@ -201,7 +202,7 @@ static Cell *mk_macro(Cell *ctx, Cell *mchs, Cell *env) {
     return c;
 }
 
-static Cell *mk_env(Cell *ctx, bool immtb, Env *outer) {
+static Cell *mk_env(Cell *ctx, bool immtb, Cell *outer) {
     Cell *c = env_new(ctx);
     env_immtb(c) = immtb;
     env_outer(c) = outer;
@@ -834,7 +835,7 @@ static Cell *find_env(Cell *env, Cell *k) {
     return CELL_NIL;
 }
 
-static void env_set(Cell *ctx, Cell *env, char *k, Cell *v) {
+static void env_set(Cell *ctx, Cell *env, Cell *k, Cell *v) {
     char *s = symbol(k);
     map<char*,Cell*> *mp;
     map<char*,Cell*>::iterator it;
@@ -2476,7 +2477,7 @@ static Cell *syntax_matcher_analyze(Cell *ctx, Cell *lit, Cell *matches, Cell *s
     }
 
     Cell *t1=NULL, *t2=NULL, *t3=NULL, *t4=NULL;
-    gc_var7(machers, pat_vars, pattern, tmpl, t5, t6, t7);
+    gc_var6(machers, pat_vars, pattern, tmpl, t5, t6);
     gc_preserve4(ctx, machers, pat_vars, pattern, tmpl);
     machers = cons(ctx, syn_env, CELL_NIL);
     for (Cell *ls=matches, *macher; is_pair(ls); ls=cdr(ls)) {
@@ -2500,10 +2501,10 @@ static Cell *syntax_matcher_analyze(Cell *ctx, Cell *lit, Cell *matches, Cell *s
         list_add(ctx, machers, macher);
     }
     gc_release(ctx);
-    gc_preserve7(ctx, machers, t1, t2, t3, t4, t5, t6);
-    t7 = mk_proc(ctx, CELL_NIL, t1=mk_closure(ctx, t2=cons(ctx, CELL_NIL, t3=cons(ctx, t4=cons(ctx, ctx_quote(ctx), t5=cons(ctx, machers, CELL_NIL)), CELL_NIL)), t6=cons(ctx, CELL_NIL, cdr(syn_env))));
+    gc_preserve6(ctx, machers, t1, t2, t3, t4, t5);
+    t6 = mk_proc(ctx, CELL_NIL, t1=mk_closure(ctx, t2=cons(ctx, CELL_NIL, t3=cons(ctx, t4=cons(ctx, ctx_quote(ctx), t5=cons(ctx, machers, CELL_NIL)), CELL_NIL)), syn_env));
     gc_release(ctx);
-    return t7;
+    return t6;
 }
 
 static Cell *syntax_transform(Cell *ctx, Cell *machers, Cell *syn_env, Cell *expr, Cell *expr_env) {
@@ -2630,15 +2631,14 @@ Loop:
             env_add(ctx, closure_env(proc_closure(c)), ctx_code(ctx), c);
         }
         if (env_immtb(ctx_env(ctx))) {
-            gotoErr(ctx, ValueError, mk_string(ctx, "define: environment is not mutable"), NULL, NULL);
+            gotoErr(ctx, mk_exception(ctx, ValueError, mk_string(ctx, "define: environment is not mutable"), NULL, NULL));
         }
         env_add(ctx, ctx_env(ctx), ctx_code(ctx), c);
         popOp(ctx, CELL_UNDEF);
     case OP_SET:
         c = car(ctx_code(ctx));
         if (!is_symbol(c)) gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "parameter is not an identifier:"), c, NULL));
-        // test
-        if (is_nil(find_env(ctx_env(ctx))), c) {
+        if (is_nil(find_env(ctx_env(ctx), c))) {
             gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "unbound variable:"), c, NULL));
         }
         if (is_immutable(c)) {
@@ -2689,7 +2689,6 @@ Loop:
             ctx_code(ctx) = closure_expr_expr(ctx_code(ctx));
         }
         if (is_symbol(ctx_code(ctx))) {
-            // test
             c = find_env(ctx_env(ctx), ctx_code(ctx));
             if (is_pair(c)) {
                 c = cdr(c);
@@ -2706,7 +2705,6 @@ Loop:
                 ctx_code(ctx) = cdr(ctx_code(ctx));
                 gotoOp(ctx, syntax_op(c));
             } else if (is_symbol(c)) {
-                // test
                 c = find_env(d, c);
                 if (is_pair(c)) {
                     c = cdr(c);
@@ -2885,12 +2883,12 @@ Loop:
         popOp(ctx, ctx_args(ctx));
     case OP_SCHEME_REPORT_ENV:
         if (number_long(car(ctx_args(ctx))) != 5) {
-            gotoErr(ctx, ValueError, mk_string(ctx, "scheme-report-environment: unsupported revision"));
+            gotoErr(ctx, mk_exception(ctx, ValueError, mk_string(ctx, "scheme-report-environment: unsupported revision"), NULL, NULL));
         }
         popOp(ctx, ctx_r5rs_env(ctx));
     case OP_NULL_ENV:
         if (number_long(car(ctx_args(ctx))) != 5) {
-            gotoErr(ctx, ValueError, mk_string(ctx, "null-environment: unsupported revision"));
+            gotoErr(ctx, mk_exception(ctx, ValueError, mk_string(ctx, "null-environment: unsupported revision"), NULL, NULL));
         }
         popOp(ctx, ctx_null_env(ctx));
     case OP_INTERACTION_ENV:
@@ -4039,7 +4037,7 @@ Cell *ischeme_ctx_new() {
     ctx_unquote_splicing(ctx) = internal(ctx, "unquote-splicing");
 
     Cell *syntax_env = mk_env(ctx, false, CELL_NIL);
-    Cell *std_env = mk_env(ctx, false, syntax_env)
+    Cell *std_env = mk_env(ctx, false, syntax_env);
     ctx_null_env(ctx) = mk_env(ctx, true, syntax_env);
     ctx_r5rs_env(ctx) = mk_env(ctx, true, std_env);
     //ctx_global_env(ctx) = cons(ctx, internal(ctx, "*global-envir*"), CELL_NIL);

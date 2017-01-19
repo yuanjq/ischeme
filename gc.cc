@@ -240,7 +240,7 @@ static uint cell_mark(Cell *ctx, Cell *c) {
     case MULTIVAR:
         n += cell_mark(ctx, multivar_var(c));
         break;
-    case ENVIR:
+    case ENV:
     default:
         return 0;
     }
@@ -309,7 +309,7 @@ static int _sizeof_cell(Cell *c) {
         s = cell_sizeof(excpt);
         break;
     case PROMISE:
-    case ENVIR:
+    case ENV:
     default:
         printf("gc error: invalid type!\n");
         break;

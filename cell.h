@@ -452,7 +452,7 @@ struct ptrCmp {
 struct Env {
     bool immtb;
     map<char*, Cell*, ptrCmp> mp;
-    Env *outer;
+    Cell *outer;
 };
 
 struct Promise {

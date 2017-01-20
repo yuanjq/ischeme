@@ -163,6 +163,14 @@ static Cell *mk_vector(Cell *ctx, uint len, Cell *fill) {
     return c;
 }
 
+static Cell *mk_env(Cell *ctx, bool immtb, Cell *outer) {
+    Cell *c = env_new(ctx);
+    env_immtb(c) = immtb;
+    env_map(c) = map<char*,Cell*,ptrCmp>();
+    env_outer(c) = outer;
+    return c;
+}
+
 static Cell *mk_closure_expr(Cell *ctx, Cell *expr, Cell *env) {
     Cell *c = closure_expr_new(ctx);
     closure_expr_expr(c) = expr;
@@ -176,7 +184,6 @@ static Cell *mk_closure(Cell *ctx, Cell *a, Cell *e) {
     gc_preserve1(ctx, c);
     closure_args(c) = car(a);
     closure_code(c) = cdr(a);
-    //closure_env(c) = cons(ctx, CELL_NIL, cdr(e));
     closure_env(c) = mk_env(ctx, false, e);
     gc_release(ctx);
     return c;
@@ -199,13 +206,6 @@ static Cell *mk_macro(Cell *ctx, Cell *mchs, Cell *env) {
     Cell *c = macro_new(ctx);
     macro_matchers(c) = mchs;
     macro_env(c) = env;
-    return c;
-}
-
-static Cell *mk_env(Cell *ctx, bool immtb, Cell *outer) {
-    Cell *c = env_new(ctx);
-    env_immtb(c) = immtb;
-    env_outer(c) = outer;
     return c;
 }
 
@@ -819,8 +819,8 @@ static void alist_append(Cell *ctx, Cell *ls, Cell *pair) {
 
 static Cell *find_env(Cell *env, Cell *k) {
     char *s = symbol(k);
-    map<char*,Cell*> *mp;
-    map<char*,Cell*>::iterator it;
+    map<char*,Cell*,ptrCmp> *mp;
+    map<char*,Cell*,ptrCmp>::iterator it;
     Cell *e = env;
     for (; is_env(e); e=env_outer(e)) {
         mp = &env_map(e);
@@ -832,13 +832,13 @@ static Cell *find_env(Cell *env, Cell *k) {
     if (!is_nil(e)) {
         return (*it).second;
     }
-    return CELL_NIL;
+    return NULL;
 }
 
 static void env_set(Cell *ctx, Cell *env, Cell *k, Cell *v) {
     char *s = symbol(k);
-    map<char*,Cell*> *mp;
-    map<char*,Cell*>::iterator it;
+    map<char*,Cell*,ptrCmp> *mp;
+    map<char*,Cell*,ptrCmp>::iterator it;
     Cell *e = env;
     for (; is_env(e); e=env_outer(e)) {
         mp = &env_map(e);
@@ -848,7 +848,7 @@ static void env_set(Cell *ctx, Cell *env, Cell *k, Cell *v) {
         }
     }
     if (is_nil(e)) {
-        env_map(env).insert(s, v);
+        env_map(env).insert({s, v});
     } else {
         (*it).second = v;
     }
@@ -856,10 +856,10 @@ static void env_set(Cell *ctx, Cell *env, Cell *k, Cell *v) {
 
 static void env_add(Cell *ctx, Cell *env, Cell *k, Cell *v) {
     char *s = symbol(k);
-    map<char*,Cell*> *mp = &env_map(env);
-    map<char*,Cell*>::iterator it = mp->find(s);
+    map<char*,Cell*,ptrCmp> *mp = &env_map(env);
+    map<char*,Cell*,ptrCmp>::iterator it = mp->find(s);
     if (it == mp->end()) {
-        mp->insert(s, v);
+        mp->insert({s, v});
     } else {
         (*it).second = v;
     }
@@ -2638,15 +2638,22 @@ Loop:
     case OP_SET:
         c = car(ctx_code(ctx));
         if (!is_symbol(c)) gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "parameter is not an identifier:"), c, NULL));
-        if (is_nil(find_env(ctx_env(ctx), c))) {
+        if (!find_env(ctx_env(ctx), c)) {
             gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "unbound variable:"), c, NULL));
         }
         if (is_immutable(c)) {
             gotoErr(ctx, mk_exception(ctx, ValueError, mk_string(ctx, "unable to alter immutable atom"), NULL, NULL));
         }
         ctx_code(ctx) = cadr(ctx_code(ctx));
-        pushOp(ctx, OP_DEF1, CELL_NIL, c);
+        pushOp(ctx, OP_SET1, CELL_NIL, c);
         gotoOp(ctx, OP_EVAL);
+    case OP_SET1:
+        c = ctx_ret(ctx);
+        if (env_immtb(ctx_env(ctx))) {
+            gotoErr(ctx, mk_exception(ctx, ValueError, mk_string(ctx, "set!: environment is not mutable"), NULL, NULL));
+        }
+        env_set(ctx, ctx_env(ctx), ctx_code(ctx), c);
+        popOp(ctx, CELL_UNDEF);
     case OP_DEF_SYNTAX:
         if (!is_pair(ctx_code(ctx)) || !is_symbol(car(ctx_code(ctx))) || !is_pair(cdr(ctx_code(ctx)))) {
             gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "invalid syntax defined"), NULL, NULL));
@@ -2664,7 +2671,7 @@ Loop:
         ctx_args(ctx) = CELL_NIL;
         gotoOp(ctx, OP_APPLY);
     case OP_DEF_SYNTAX2:
-        if (!is_pair(ctx_ret(ctx)) || !is_pair(car(ctx_ret(ctx))) || !is_pair(cdr(ctx_ret(ctx)))) {
+        if (!is_pair(ctx_ret(ctx)) || !is_env(car(ctx_ret(ctx))) || !is_pair(cdr(ctx_ret(ctx)))) {
             gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "invalid syntax defined"), NULL, NULL));
         }
         env_set(ctx, ctx_env(ctx), ctx_code(ctx), mk_macro(ctx, cdr(ctx_ret(ctx)), car(ctx_ret(ctx))));
@@ -2690,8 +2697,7 @@ Loop:
         }
         if (is_symbol(ctx_code(ctx))) {
             c = find_env(ctx_env(ctx), ctx_code(ctx));
-            if (is_pair(c)) {
-                c = cdr(c);
+            if (c) {
                 if (is_syntax(c)) {
                     gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "invalid use of syntax as value:"), ctx_code(ctx), NULL));
                 }
@@ -2706,8 +2712,7 @@ Loop:
                 gotoOp(ctx, syntax_op(c));
             } else if (is_symbol(c)) {
                 c = find_env(d, c);
-                if (is_pair(c)) {
-                    c = cdr(c);
+                if (c) {
                     if (is_syntax(c)) {
                         ctx_code(ctx) = cdr(ctx_code(ctx));
                         gotoOp(ctx, syntax_op(c));
@@ -2966,7 +2971,6 @@ Loop:
             }
         }
         if (is_pair(c)) {
-            //e = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
             e = mk_env(ctx, false, ctx_env(ctx));
             d = car(c);
             a = car(d);
@@ -3039,7 +3043,6 @@ Loop:
         }
         d = cdr(ctx_code(ctx));
         if (is_pair(d)) {
-            //e = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
             e = mk_env(ctx, false, ctx_env(ctx));
             pushOpEx(ctx, OP_CASE1, CELL_NIL, d, CELL_NIL, e);
             gotoOpEx(ctx, OP_EVAL, CELL_NIL, c, CELL_NIL, e);
@@ -3058,13 +3061,11 @@ Loop:
         }
         popOp(ctx, CELL_UNDEF);
     case OP_BEGIN:
-        //ctx_env(ctx) = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
         ctx_args(ctx) = CELL_NIL;
         gotoOp(ctx, OP_EVAL_LIST);
     case OP_DO:
         c = car(ctx_code(ctx));
         d = cdr(ctx_code(ctx));
-        //e = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
         e = mk_env(ctx, false, ctx_env(ctx));
         if (is_pair(c)) {
             b = cons(ctx, CELL_NIL, CELL_NIL);
@@ -3149,6 +3150,7 @@ Loop:
         ctx_args(ctx) = CELL_NIL;
         ctx_ret(ctx) = ctx_code(ctx);
         ctx_code(ctx) = is_symbol(car(ctx_code(ctx))) ? cadr(ctx_code(ctx)) : car(ctx_code(ctx));
+        ctx_env(ctx) = mk_env(ctx, false, ctx_env(ctx));
         gotoOp(ctx, OP_LET1);
     case OP_LET1:
         ctx_args(ctx) = cons(ctx, ctx_ret(ctx), ctx_args(ctx));
@@ -3170,8 +3172,6 @@ Loop:
             gotoOp(ctx, OP_LET2);
         }
     case OP_LET2:
-        //ctx_env(ctx) = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
-        ctx_env(ctx) = mk_env(ctx, false, ctx_env(ctx));
         c = is_symbol(car(ctx_code(ctx))) ? cadr(ctx_code(ctx)) : car(ctx_code(ctx));
         if (is_symbol(car(ctx_code(ctx)))) {
             d = cddr(ctx_code(ctx));
@@ -3196,6 +3196,7 @@ Loop:
         }
         gotoOp(ctx, OP_EVAL_LIST);
     case OP_LETSEQ:
+        ctx_env(ctx) = mk_env(ctx, false, ctx_env(ctx));
         if (is_nil(car(ctx_code(ctx)))) {
             ctx_code(ctx) = cdr(ctx_code(ctx));
             ctx_args(ctx) = CELL_NIL;
@@ -3211,14 +3212,10 @@ Loop:
         ctx_code(ctx) = cadar(c);
         gotoOp(ctx, OP_EVAL);
     case OP_LETSEQ1:
-        //ctx_env(ctx) = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
-        ctx_env(ctx) = mk_env(ctx, false, ctx_env(ctx));
-        gotoOp(ctx, OP_LETSEQ2);
-    case OP_LETSEQ2:
         env_add(ctx, ctx_env(ctx), caar(ctx_code(ctx)), ctx_ret(ctx));
         ctx_code(ctx) = cdr(ctx_code(ctx));
         if (is_pair(ctx_code(ctx))) {
-            pushOp(ctx, OP_LETSEQ2, ctx_args(ctx), ctx_code(ctx));
+            pushOp(ctx, OP_LETSEQ1, ctx_args(ctx), ctx_code(ctx));
             ctx_code(ctx) = cadar(ctx_code(ctx));
             gotoOp(ctx, OP_EVAL);
         } else {
@@ -3229,7 +3226,6 @@ Loop:
     case OP_LETREC:
         c = car(ctx_code(ctx));
         d = cdr(ctx_code(ctx));
-        //e = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
         e = mk_env(ctx, false, ctx_env(ctx));
         if (is_pair(c)) {
             b = cons(ctx, CELL_NIL, CELL_NIL);
@@ -3273,8 +3269,6 @@ Loop:
     case OP_LETREC_SYNTAX:
         c = car(ctx_code(ctx));
         d = cdr(ctx_code(ctx));
-        //e = cons(ctx, f = mk_long(ctx, op), cdr(ctx_env(ctx)));
-        // TODO: handle op
         e = mk_env(ctx, false, ctx_env(ctx));
         if (is_pair(c)) {
             const char *opn = (op == OP_LET_SYNTAX) ? "let-syntax" : "letrec-syntax";
@@ -3294,7 +3288,8 @@ Loop:
             if (op == OP_LET_SYNTAX) {
                 d = cons(ctx, d, CELL_NIL);
             }
-            pushOpEx(ctx, OP_LET_SYNTAX1, cdr(b), cdr(c), d, e);
+            rplaca(b, mk_long(ctx, op));
+            pushOpEx(ctx, OP_LET_SYNTAX1, b, cdr(c), d, e);
             gotoOpEx(ctx, OP_EVAL, CELL_NIL, cadar(c), CELL_NIL, e);
         }
         ctx_args(ctx) = CELL_NIL;
@@ -3304,19 +3299,19 @@ Loop:
     case OP_LET_SYNTAX1:
         c = ctx_ret(ctx);
         if (!is_proc(c)) {
-            op = number_long(car(ctx_env(ctx)));
+            op = number_long(car(ctx_args(ctx)));
             gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, (op == OP_LET_SYNTAX) ? "let-syntax" : "letrc-syntax"), NULL, NULL));
         }
         pushOpEx(ctx, OP_LET_SYNTAX2, ctx_args(ctx), ctx_code(ctx), ctx_data(ctx), ctx_env(ctx));
         gotoOpEx(ctx, OP_APPLY, CELL_NIL, c, CELL_NIL, ctx_env(ctx));
     case OP_LET_SYNTAX2:
         a = ctx_ret(ctx);
-        b = ctx_args(ctx);
+        b = cdr(ctx_args(ctx));
         c = ctx_code(ctx);
         d = ctx_data(ctx);
         e = ctx_env(ctx);
-        op = number_long(car(e));
-        if (!is_pair(a) || !is_pair(car(a)) || !is_pair(cdr(a))) {
+        op = number_long(car(ctx_args(ctx)));
+        if (!is_pair(a) || !is_env(car(a)) || !is_pair(cdr(a))) {
             gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, (op == OP_LET_SYNTAX) ? "let-syntax" : "letrc-syntax"), NULL, NULL));
         }
         if (op == OP_LETREC_SYNTAX) {
@@ -3451,7 +3446,6 @@ Loop:
                     }
                 }
             }
-            //e = cons(ctx, CELL_NIL, cdr(ctx_env(ctx)));
             e = mk_env(ctx, false, ctx_env(ctx));
             if (op == OP_MAP) {
                 pushOpEx(ctx, OP_MAP1, CELL_NIL, b, c, e);
@@ -4025,6 +4019,7 @@ Cell *ischeme_ctx_new() {
     g_true.t = BOOLEAN;
     g_false.t = BOOLEAN;
     init_readers();
+    ctx_inports(ctx) = vector<Cell*>();
     ctx_inport(ctx) = NULL;
     ctx_outport(ctx) = mk_port(ctx, stdout, NULL, PORT_FILE | PORT_OUTPUT);
     ctx_instructs(ctx) = CELL_NIL;
@@ -4040,7 +4035,6 @@ Cell *ischeme_ctx_new() {
     Cell *std_env = mk_env(ctx, false, syntax_env);
     ctx_null_env(ctx) = mk_env(ctx, true, syntax_env);
     ctx_r5rs_env(ctx) = mk_env(ctx, true, std_env);
-    //ctx_global_env(ctx) = cons(ctx, internal(ctx, "*global-envir*"), CELL_NIL);
     ctx_global_env(ctx) = mk_env(ctx, false, std_env);
     ctx_env(ctx) = ctx_global_env(ctx);
         

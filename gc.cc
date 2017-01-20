@@ -168,6 +168,8 @@ static uint cell_mark(Cell *ctx, Cell *c) {
         break;
     case CONTEXT: {
         n += cell_mark(ctx, ctx_global_env(c));
+        n += cell_mark(ctx, ctx_r5rs_env(c));
+        n += cell_mark(ctx, ctx_null_env(c));
         n += cell_mark(ctx, ctx_symbols(c));
         n += cell_mark(ctx, ctx_inport(c));
         n += cell_mark(ctx, ctx_outport(c));
@@ -240,7 +242,23 @@ static uint cell_mark(Cell *ctx, Cell *c) {
     case MULTIVAR:
         n += cell_mark(ctx, multivar_var(c));
         break;
-    case ENV:
+    case ENV: {
+        map<char*,Cell*,ptrCmp> *mp;
+        map<char*,Cell*,ptrCmp>::iterator it;
+        for (;;) {
+            mp = &env_map(c);
+            for (it=mp->begin(); it!=mp->end(); ++it) {
+                n += cell_mark(ctx, (*it).second);
+            }
+            c=env_outer(c);
+            if (!is_env(c)) break;
+            if (!is_marked(c)) {
+                cell_markedp(c) = true;
+                n += 1;
+            }
+        }
+        break;
+    }
     default:
         return 0;
     }
@@ -309,7 +327,11 @@ static int _sizeof_cell(Cell *c) {
         s = cell_sizeof(excpt);
         break;
     case PROMISE:
+        s = cell_sizeof(proms);
+        break;
     case ENV:
+        s = cell_sizeof(env);
+        break;
     default:
         printf("gc error: invalid type!\n");
         break;
@@ -337,6 +359,9 @@ static uint cell_sweep(Cell *ctx, uint *sum_freed, uint *max_freed) {
             if (is_valid_object((Cell*)p)) {
                 if (!cell_markedp((Cell*)p)) {
                     size = _sizeof_cell((Cell*)p);
+                    if (is_env((Cell*)p)) {
+                        env_map((Cell*)p).~map<char*,Cell*,ptrCmp>();
+                    }
                     cell_ptrtag(((Cell*)p)) = 0;
                     if (p == ((void*)r) + r->size && ((void*)p) + size == q) {
                         size += q->size;

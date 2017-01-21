@@ -2562,8 +2562,7 @@ Loop:
                 write_string(ctx, ctx_outport(ctx), ">> ");
             }
         }
-        pushOp(ctx, OP_REPL_LOOP, ctx_args(ctx), ctx_global_env(ctx));
-        ctx_env(ctx) = ctx_global_env(ctx);
+        pushOp(ctx, OP_REPL_LOOP, ctx_args(ctx), CELL_NIL);
         gotoOp(ctx, OP_REPL_READ);
     case OP_REPL_READ:
         c = read_cell(ctx);
@@ -2604,6 +2603,7 @@ Loop:
             int c;
             while ((c = get_char(ctx_inport(ctx))) != '\n' && c != EOF);
             ctx_args(ctx) = CELL_NIL;
+            ctx_env(ctx) = ctx_global_env(ctx);
             gotoOp(ctx, OP_REPL_LOOP);
         }
         gc_release(ctx);
@@ -3495,11 +3495,7 @@ Loop:
         } else if (!is_pair(d) || !is_env(car(d))) {
             gotoErr(ctx, mk_exception(ctx, TypeError, mk_string(ctx, "eval: unmatched type of argument 2, must be enviroment"), NULL, NULL));
         }
-        pushOpEx(ctx, OP_PEVAL1, CELL_NIL, CELL_NIL, CELL_NIL, ctx_global_env(ctx));
         gotoOpEx(ctx, OP_EVAL, CELL_NIL, c, CELL_NIL, car(d));
-    case OP_PEVAL1:
-        ctx_env(ctx) = ctx_global_env(ctx);
-        popOp(ctx, ctx_ret(ctx));
     case OP_PAPPLY:
         c = car(ctx_args(ctx));
         d = cdr(ctx_args(ctx));

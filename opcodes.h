@@ -62,6 +62,7 @@ _OPCODE(NULL,                             0,          OP_MAP1,                  
 _OPCODE("for-each",                       IPROC,      OP_FOREACH,                 2,  0xFFFF, T_PROC T_LIST)
 _OPCODE(NULL,                             0,          OP_FOREACH1,                0,  0,  0)
 _OPCODE("eval",                           IPROC,      OP_PEVAL,                   1,  2,  0)
+_OPCODE(NULL,                             0,          OP_PEVAL1,                  0,  0,  0)
 _OPCODE("apply",                          IPROC,      OP_PAPPLY,                  2,  0xFFFF, 0)
 _OPCODE("force",                          IPROC,      OP_FORCE,                   1,  1,  T_PROMISE)
 _OPCODE(NULL,                             0,          OP_FORCE1,                  0,  0,  0)
@@ -75,7 +76,7 @@ _OPCODE(NULL,                             0,          OP_DYNAMIC_WIND2,         
 _OPCODE(NULL,                             0,          OP_DYNAMIC_WIND3,           0,  0,  0)
 _OPCODE("scheme-report-environment",      IPROC,      OP_SCHEME_REPORT_ENV,       1,  1,  T_INTEGER)
 _OPCODE("null-environment",               IPROC,      OP_NULL_ENV,                1,  1,  T_INTEGER)
-_OPCODE("interaction-environment ",       IPROC,      OP_INTERACTION_ENV,         0,  0,  0)
+_OPCODE("interaction-environment",        IPROC,      OP_INTERACTION_ENV,         0,  0,  0)
 
 _OPCODE("load",                           IPROC,      OP_LOAD,                    1,  1,  T_STRING)
 _OPCODE("transcript-on",                  IPROC,      OP_TRANSCRIPT_ON,           0,  0,  0)

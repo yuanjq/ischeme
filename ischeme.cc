@@ -832,7 +832,7 @@ static Cell *find_env(Cell *env, Cell *k) {
     if (!is_nil(e)) {
         return (*it).second;
     }
-    return NULL;
+    return CELL_NIL;
 }
 
 static void env_set(Cell *ctx, Cell *env, Cell *k, Cell *v) {
@@ -848,9 +848,9 @@ static void env_set(Cell *ctx, Cell *env, Cell *k, Cell *v) {
         }
     }
     if (is_nil(e)) {
-        env_map(env).insert({s, v});
+        env_map(env).insert({s, cons(ctx, k, v)});
     } else {
-        (*it).second = v;
+        rplacd((*it).second, v);
     }
 }
 
@@ -859,9 +859,9 @@ static void env_add(Cell *ctx, Cell *env, Cell *k, Cell *v) {
     map<char*,Cell*,ptrCmp> *mp = &env_map(env);
     map<char*,Cell*,ptrCmp>::iterator it = mp->find(s);
     if (it == mp->end()) {
-        mp->insert({s, v});
+        mp->insert({s, cons(ctx, k, v)});
     } else {
-        (*it).second = v;
+        rplacd((*it).second, v);
     }
 }
 
@@ -1156,6 +1156,8 @@ static void write_cell(Cell *ctx, Cell *port, Cell *c, bool readable, bool more,
             }
         }
         write_char(ctx, port, '>');
+    } else if (is_env(c)) {
+        snprintf(s, STR_BUF_SIZE, "#<ENVIRONMENT:%p>", c);
     } else {
         snprintf(s, STR_BUF_SIZE, "unknown:%p", c);
     }
@@ -2561,6 +2563,7 @@ Loop:
             }
         }
         pushOp(ctx, OP_REPL_LOOP, ctx_args(ctx), ctx_global_env(ctx));
+        ctx_env(ctx) = ctx_global_env(ctx);
         gotoOp(ctx, OP_REPL_READ);
     case OP_REPL_READ:
         c = read_cell(ctx);
@@ -2638,7 +2641,7 @@ Loop:
     case OP_SET:
         c = car(ctx_code(ctx));
         if (!is_symbol(c)) gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "parameter is not an identifier:"), c, NULL));
-        if (!find_env(ctx_env(ctx), c)) {
+        if (is_nil(find_env(ctx_env(ctx), c))) {
             gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "unbound variable:"), c, NULL));
         }
         if (is_immutable(c)) {
@@ -2697,7 +2700,8 @@ Loop:
         }
         if (is_symbol(ctx_code(ctx))) {
             c = find_env(ctx_env(ctx), ctx_code(ctx));
-            if (c) {
+            if (is_pair(c)) {
+                c = cdr(c);
                 if (is_syntax(c)) {
                     gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "invalid use of syntax as value:"), ctx_code(ctx), NULL));
                 }
@@ -2712,7 +2716,8 @@ Loop:
                 gotoOp(ctx, syntax_op(c));
             } else if (is_symbol(c)) {
                 c = find_env(d, c);
-                if (c) {
+                if (is_pair(c)) {
+                    c = cdr(c);
                     if (is_syntax(c)) {
                         ctx_code(ctx) = cdr(ctx_code(ctx));
                         gotoOp(ctx, syntax_op(c));
@@ -3212,6 +3217,7 @@ Loop:
         ctx_code(ctx) = cadar(c);
         gotoOp(ctx, OP_EVAL);
     case OP_LETSEQ1:
+        ctx_env(ctx) = mk_env(ctx, false, ctx_env(ctx));
         env_add(ctx, ctx_env(ctx), caar(ctx_code(ctx)), ctx_ret(ctx));
         ctx_code(ctx) = cdr(ctx_code(ctx));
         if (is_pair(ctx_code(ctx))) {
@@ -3483,13 +3489,23 @@ Loop:
         popOp(ctx, CELL_UNDEF);
     case OP_PEVAL:
         c = car(ctx_args(ctx));
-        gotoOpEx(ctx, OP_EVAL, CELL_NIL, c, CELL_NIL, ctx_env(ctx));
+        d = cdr(ctx_args(ctx));
+        if (is_nil(d)) {
+            gotoOpEx(ctx, OP_EVAL, CELL_NIL, c, CELL_NIL, ctx_global_env(ctx));
+        } else if (!is_pair(d) || !is_env(car(d))) {
+            gotoErr(ctx, mk_exception(ctx, TypeError, mk_string(ctx, "eval: unmatched type of argument 2, must be enviroment"), NULL, NULL));
+        }
+        pushOpEx(ctx, OP_PEVAL1, CELL_NIL, CELL_NIL, CELL_NIL, ctx_global_env(ctx));
+        gotoOpEx(ctx, OP_EVAL, CELL_NIL, c, CELL_NIL, car(d));
+    case OP_PEVAL1:
+        ctx_env(ctx) = ctx_global_env(ctx);
+        popOp(ctx, ctx_ret(ctx));
     case OP_PAPPLY:
         c = car(ctx_args(ctx));
         d = cdr(ctx_args(ctx));
         if (!is_proc(c) && !is_continue(c)) {
             gotoErr(ctx, mk_exception(ctx, TypeError,
-                    mk_string(ctx, "apply: unmatched type of argument 1, muset be precedure"), NULL, NULL));
+                    mk_string(ctx, "apply: unmatched type of argument 1, must be precedure"), NULL, NULL));
         }
         if (is_nil(cdr(d))) {
             if (!is_pair(car(d))) {
@@ -4050,7 +4066,7 @@ Cell *ischeme_ctx_new() {
         }
     }
     env_add(ctx, std_env, internal(ctx, "call/cc"),
-            find_env(std_env, internal(ctx, g_opcodes[OP_CALLCC].name)));
+            cdr(find_env(std_env, internal(ctx, g_opcodes[OP_CALLCC].name))));
     gc_release(ctx);
     return ctx;
 }

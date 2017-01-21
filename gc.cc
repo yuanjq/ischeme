@@ -129,6 +129,7 @@ static uint cell_mark(Cell *ctx, Cell *c) {
         }
         break;
     case PAIR:
+    case LIST:
         for (;;) {
             n += cell_mark(ctx, car(c));
             c = cdr(c);
@@ -141,11 +142,6 @@ static uint cell_mark(Cell *ctx, Cell *c) {
                 n += cell_mark(ctx, c);
                 break;
             }
-        }
-        break;
-    case LIST:
-        for (Cell *ls=c; is_pair(ls); ls=cdr(ls)) {
-            n += cell_mark(ctx, car(ls));
         }
         break;
     case VECTOR: {
@@ -336,7 +332,7 @@ static int _sizeof_cell(Cell *c) {
         printf("gc error: invalid type!\n");
         break;
     }
-    return s;
+    return segment_align(s);
 }
 
 static uint cell_sweep(Cell *ctx, uint *sum_freed, uint *max_freed) {

@@ -20,7 +20,7 @@ struct Segment {
   uint size;
   SegFreeList *free_list;
   Segment *next;
-  void *data;
+  uchar *data;
 };
 
 static uint segment_total_size(Segment *seg) {
@@ -41,10 +41,10 @@ Segment *cell_mk_segment(uint size) {
     seg = (Segment *)cell_malloc(size);
     if (!seg) return NULL;
     seg->size = size;
-    seg->data = (void*)seg + segment_align(S(Segment));
+    seg->data = (uchar*)seg + segment_align(S(Segment));
     list = seg->free_list = (SegFreeList*) seg->data;
     seg->next = NULL;
-    next = (SegFreeList*) ((void*)list + segment_align(S(SegFreeList)));
+    next = (SegFreeList*) ((uchar*)list + segment_align(S(SegFreeList)));
     list->size = 0;
     list->next = next;
     next->size = size - segment_align(S(Segment)) - segment_align(S(SegFreeList));
@@ -77,8 +77,8 @@ static void *cell_try_alloc(Cell *ctx, uint size) {
     for (seg=ctx_segments(ctx); seg; seg=seg->next) {
         for (ls1=seg->free_list, ls2=ls1->next; ls2; ls1=ls2, ls2=ls2->next) {
             if (ls2->size >= size) {
-                ls3 = (SegFreeList*) ((void*)ls2 + size);
-                if (((void*)ls3) + S(SegFreeList) <= ((void*)ls2) + ls2->size) {
+                ls3 = (SegFreeList*) ((uchar*)ls2 + size);
+                if (((uchar*)ls3) + S(SegFreeList) <= ((uchar*)ls2) + ls2->size) {
                     uint sz = ls2->size;
                     SegFreeList *nx = ls2->next;
                     ls3->size = sz - size;
@@ -169,6 +169,9 @@ static uint cell_mark(Cell *ctx, Cell *c) {
         n += cell_mark(ctx, ctx_symbols(c));
         n += cell_mark(ctx, ctx_inport(c));
         n += cell_mark(ctx, ctx_outport(c));
+        if (ctx_transc_port(ctx)) {
+            n += cell_mark(ctx, ctx_transc_port(ctx));
+        }
         vector<Cell*> inports = ctx_inports(ctx);
         vector<Cell*>::iterator it;
         for (it = inports.begin(); it != inports.end(); ++it) {
@@ -341,16 +344,16 @@ static uint cell_sweep(Cell *ctx, uint *sum_freed, uint *max_freed) {
     SegFreeList *p, *q, *r;
     *sum_freed = *max_freed = 0;
     for (Segment *it=seg; it; it=it->next) {
-        void* st = it->data + segment_align(S(SegFreeList));
-        void* ed = ((void*)it) + it->size;
+        uchar* st = it->data + segment_align(S(SegFreeList));
+        uchar* ed = ((uchar*)it) + it->size;
         p = (SegFreeList*)st;
         q = r = it->free_list;
-        while (p < ed) {
+        while ((uchar*)p < ed) {
             if (q && p >= q) {
                 for (; q && q<=p; r=q, q=q->next);
             }
-            if (p < ((void*)r) + r->size) {
-                p = (SegFreeList*) ((void*)r + segment_align(r->size));
+            if ((uchar*)p < ((uchar*)r) + r->size) {
+                p = (SegFreeList*) ((uchar*)r + segment_align(r->size));
             }
             if (is_valid_object((Cell*)p)) {
                 if (!cell_markedp((Cell*)p)) {
@@ -359,14 +362,14 @@ static uint cell_sweep(Cell *ctx, uint *sum_freed, uint *max_freed) {
                         env_map((Cell*)p).~map<char*,Cell*,ptrCmp>();
                     }
                     cell_ptrtag(((Cell*)p)) = 0;
-                    if (p == ((void*)r) + r->size && ((void*)p) + size == q) {
+                    if ((uchar*)p == ((uchar*)r) + r->size && ((uchar*)p) + size == (uchar*)q) {
                         size += q->size;
                         r->size += size;
                         r->next = q->next;
                         q = q->next;
-                    } else if (p == ((void*)r) + r->size) {
+                    } else if ((uchar*)p == ((uchar*)r) + r->size) {
                         r->size += size;
-                    } else if (((void*)p) + size == q) {
+                    } else if (((uchar*)p) + size == (uchar*)q) {
                         r->next = p;
                         p->size = size + q->size;
                         p->next = q->next;
@@ -383,13 +386,13 @@ static uint cell_sweep(Cell *ctx, uint *sum_freed, uint *max_freed) {
                     }
                     *sum_freed += size;
                     ++total;
-                    p = (SegFreeList*)(((void*)p) + segment_align(size));
+                    p = (SegFreeList*)(((uchar*)p) + segment_align(size));
                 } else {
                     cell_markedp(((Cell*)p)) = 0;
-                    p = (SegFreeList*)(((void*)p) + segment_align(_sizeof_cell(((Cell*)p))));
+                    p = (SegFreeList*)(((uchar*)p) + segment_align(_sizeof_cell(((Cell*)p))));
                 }
             } else {
-                p = (SegFreeList*)(((void*)p) + segment_align(1));
+                p = (SegFreeList*)(((uchar*)p) + segment_align(1));
             }
         }
     }

@@ -40,7 +40,8 @@ typedef unsigned long           ulong;
 #define ISC_SEG_GROW_THRESHOLD  0.75
 #define ISC_SEG_REDU_THRESHOLD  0.25
 #define ISC_SEG_GROW_RATIO      1.5
-#define STR_BUF_SIZE            128
+#define STR_BUF_SIZE            256
+#define IN_BUF_SIZE             512
 
 #define POINTER_TAG             0xA745C39BuL
 #define T_MASK                  0x00FF
@@ -175,6 +176,12 @@ typedef unsigned long           ulong;
 #define ctx_symbols(c)          (cell_field(c,ctx,symbols))
 #define ctx_inport(c)           (cell_field(c,ctx,inport))
 #define ctx_outport(c)          (cell_field(c,ctx,outport))
+#define ctx_transc_port(c)      (cell_field(c,ctx,trsport))
+#define ctx_transc_idx(c)       (cell_field(c,ctx,trsidx))
+#define ctx_transc_inportp(c)   (cell_field(c,ctx,trsinp))
+#define ctx_inbuf(c)            (cell_field(c,ctx,inbuf))
+#define ctx_inbuf_idx(c)        (cell_field(c,ctx,inbuf_idx))
+#define ctx_inbuf_len(c)        (cell_field(c,ctx,inbuf_len))
 #define ctx_inports(c)          (cell_field(c,ctx,inports))
 #define ctx_inports_head(c)     (ctx_inports(c).front())
 #define ctx_inports_tail(c)     (ctx_inports(c).back())
@@ -404,7 +411,13 @@ struct Context {
     Cell *symbols;
     Cell *inport;
     Cell *outport;
+    Cell *trsport;
+    bool trsinp;
+    int trsidx;
     vector<Cell*> inports;
+    char inbuf[IN_BUF_SIZE];
+    int inbuf_idx;
+    int inbuf_len;
 
     Op op;
     Cell *ret;

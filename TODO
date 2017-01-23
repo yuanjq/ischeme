@@ -17,11 +17,11 @@ iScheme TODO LIST
    vector->list list? list list-tail list-ref length append  reverse memq memv
    member assq assv assoc number? cons car cdr set-car! set-cdr! odd? even?
    < <= > >= = + - * / for-each force values call-with-values dynamic-wind
-   scheme-report-environment null-environment interaction-environment]
-   - State "DONE"           [2017/01/18 update]
+   scheme-report-environment null-environment interaction-environment transcript-on
+   transcript-off]
+   - State "DONE"           [2017/01/23 update]
 
-   [transcript-on transcript-off read write
-   read-char write-char peek-char char-ready? eof-object? open-input-file open-output-file
+   [read write read-char write-char peek-char char-ready? eof-object? open-input-file open-output-file
    close-input-port close-output-port input-port? output-port? current-input-port
    current-output-port call-with-input-file call-with-output-file with-input-from-file
    with-output-to-file char=? char<? char<=? char>? char>=? char-ci=? char-ci<?

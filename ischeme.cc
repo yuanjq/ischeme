@@ -322,21 +322,19 @@ static inline void port_flush(Cell *p) {
     fflush(port_file(p));
 }
 
-static void port_close(Cell *ctx, Cell* p, int f) {
-    port_type(p) &= ~f;
-	if((port_type(p) & (PORT_INPUT | PORT_OUTPUT)) == 0) {
-		if(port_type(p) & PORT_FILE) {
-            port_file_name(p) = NULL;
-			fclose(port_file(p));
-		}
-		port_type(p) = PORT_FREE;
-	}
+static void port_close(Cell *ctx, Cell* p) {
+    if(port_type(p) & PORT_FILE) {
+        port_file_name(p) = NULL;
+        fclose(port_file(p));
+        port_file(p) = NULL;
+    }
+    port_type(p) = PORT_FREE;
 }
 
 static Cell *push_load_file(Cell *ctx, char *name) {
 	FILE *fin = fopen(name, "r");
 	if (!fin) {
-        char buf[128];
+        char buf[STR_BUF_SIZE];
         snprintf(buf, sizeof(buf), "can not open file \"%s\"", name);
         return mk_exception(ctx, IOError, mk_string(ctx, buf), NULL, NULL);
     }
@@ -347,7 +345,7 @@ static Cell *push_load_file(Cell *ctx, char *name) {
 
 static void pop_load_file(Cell *ctx) {
     if (ctx_inports(ctx).size() > 1) {
-		port_close(ctx, ctx_inport(ctx), PORT_INPUT);
+		port_close(ctx, ctx_inport(ctx));
         ctx_inports_pop(ctx);
         ctx_inport(ctx) = ctx_inports_tail(ctx);
 	}
@@ -357,6 +355,14 @@ Cell *write_char(Cell *ctx, Cell *out, int c) {
 	if(port_type(out) & PORT_FILE) {
         c = fputc(c, port_file(out));
         port_flush(out);
+        if (ctx_transc_port(ctx) && (port_file(out) == stdout || port_file(out) == stderr)) {
+            if (ctx_transc_inportp(ctx)) {
+                ctx_transc_inportp(ctx) = false;
+                fputc('\n', port_file(ctx_transc_port(ctx)));
+            }
+            fputc(c, port_file(ctx_transc_port(ctx)));
+            port_flush(ctx_transc_port(ctx));
+        }
 		return CELL_UNDEF;
 	} else {
 		if(port_string_end(out) <= port_string_pos(out)) {
@@ -373,6 +379,14 @@ Cell *write_string(Cell *ctx, Cell *out, const char *s) {
 	if (port_type(out) & PORT_FILE) {
         len = fwrite(s, 1, len, port_file(out));
         port_flush(out);
+        if (ctx_transc_port(ctx) && (port_file(out) == stdout || port_file(out) == stderr)) {
+            if (ctx_transc_inportp(ctx)) {
+                ctx_transc_inportp(ctx) = false;
+                fputc('\n', port_file(ctx_transc_port(ctx)));
+            }
+            fwrite(s, 1, len, port_file(ctx_transc_port(ctx)));
+            port_flush(ctx_transc_port(ctx));
+        }
 		return CELL_UNDEF;
 	} else if (port_type(out) & PORT_STRING) {
 	    if (len > port_string_end(out) - port_string_pos(out)) {
@@ -384,11 +398,34 @@ Cell *write_string(Cell *ctx, Cell *out, const char *s) {
     return mk_exception(ctx, IOError, mk_string(ctx, "invalid out port"), NULL, NULL);
 }
 
-static inline int get_char(Cell *in) {
+static inline int get_char(Cell *ctx, Cell *in) {
     if (is_port_eof(in)) return EOF;
     int c = 0;
     if (port_type(in) & PORT_FILE) {
-        c = fgetc(port_file(in));
+        bool fresh = false;
+        if (++ctx_inbuf_idx(ctx) < ctx_inbuf_len(ctx)) {
+            c = ctx_inbuf(ctx)[ctx_inbuf_idx(ctx)];
+        } else {
+            char *s = fgets(ctx_inbuf(ctx), IN_BUF_SIZE, port_file(in));
+            if (!s) {
+                return EOF;
+            }
+            c = s[0];
+            ctx_inbuf_len(ctx) = strlen(s);
+            ctx_inbuf_idx(ctx) = 0;
+            fresh = true;
+        }
+        if (ctx_transc_port(ctx) && port_file(in) == stdin) {
+            if (ctx_transc_idx(ctx) < ctx_inbuf_idx(ctx) || fresh) {
+                if (!ctx_transc_inportp(ctx) && c == '\n') {
+                    ctx_transc_inportp(ctx) = true;
+                    return c;
+                }
+                ctx_transc_idx(ctx) = ctx_inbuf_idx(ctx);
+                fputc(c, port_file(ctx_transc_port(ctx)));
+                port_flush(ctx_transc_port(ctx));
+            }
+        }
     } else {
         if (port_string_pos(in) == 0 || port_string_pos(in) == port_string_end(in))
             c == EOF;
@@ -398,10 +435,10 @@ static inline int get_char(Cell *in) {
     return c;
 }
 
-static inline void unget_char(Cell *out, int c) {
+static inline void unget_char(Cell *ctx, Cell *out, int c) {
     if (c == EOF) return;
     if (port_type(out) & PORT_FILE) {
-        ungetc(c, port_file(out));
+        --ctx_inbuf_idx(ctx);
     } else {
         if (port_string_pos(out) != port_string_start(out)) --port_string_pos(out);
     }
@@ -409,7 +446,7 @@ static inline void unget_char(Cell *out, int c) {
 
 static inline int skip_line(Cell *ctx) {
     int c = 0, n = 0;
-    while ((c = get_char(ctx_inport(ctx))) != EOF && c != '\n') ++n;
+    while ((c = get_char(ctx, ctx_inport(ctx))) != EOF && c != '\n') ++n;
     if (c == '\n') {
         if (ctx_inports_tail(ctx) && port_type(ctx_inports_tail(ctx)) & PORT_FILE)
             ++port_file_pos(ctx_inports_tail(ctx));
@@ -426,11 +463,11 @@ static int skip_comment(Cell *ctx, int c) {
         if (c == EOF) return EOF;
         n += c;
     } else if (c == '#') {
-        c = get_char(ctx_inport(ctx));
+        c = get_char(ctx, ctx_inport(ctx));
         if (c == EOF) return EOF;
         if (c != '!')  {
-            unget_char(ctx_inport(ctx), c);
-            unget_char(ctx_inport(ctx), '#');
+            unget_char(ctx, ctx_inport(ctx), c);
+            unget_char(ctx, ctx_inport(ctx), '#');
             return 0;
         }
         n += 2;
@@ -444,7 +481,7 @@ static int skip_comment(Cell *ctx, int c) {
 static int skip_space(Cell *ctx) {
     int c = 0, sum = 0, line = 0;
     do {
-        c = get_char(ctx_inport(ctx));
+        c = get_char(ctx, ctx_inport(ctx));
         ++sum;
         if (c == '\n') ++line;
         else if (c == ';' || c == '#') {
@@ -459,7 +496,7 @@ static int skip_space(Cell *ctx) {
     if (port_type(ctx_inports_tail(ctx)) & PORT_FILE)
         port_file_pos(ctx_inports_tail(ctx)) += line;
     if (c != EOF) {
-        unget_char(ctx_inport(ctx), c);
+        unget_char(ctx, ctx_inport(ctx), c);
         return --sum;
     }
     return EOF;
@@ -478,7 +515,7 @@ static Cell *reverse(Cell *ctx, Cell *old) {
 static int get_token(Cell *ctx) {
     int c = skip_space(ctx);
     if (c == EOF) return TOK_EOF;
-    switch (c = get_char(ctx_inport(ctx))) {
+    switch (c = get_char(ctx, ctx_inport(ctx))) {
     case EOF: return TOK_EOF;
     case '(': return TOK_LPAREN;
     case ')': return TOK_RPAREN;
@@ -489,43 +526,43 @@ static int get_token(Cell *ctx) {
     case '.': {
         if (skip_space(ctx) > 0) return TOK_DOT;
         int a, b, d;
-        if ((a = get_char(ctx_inport(ctx))) == '.') {
-            if ((b = get_char(ctx_inport(ctx))) == '.') {
-                d = get_char(ctx_inport(ctx));
+        if ((a = get_char(ctx, ctx_inport(ctx))) == '.') {
+            if ((b = get_char(ctx, ctx_inport(ctx))) == '.') {
+                d = get_char(ctx, ctx_inport(ctx));
                 if (strchr(DELIMITERS, d)) {
-                    unget_char(ctx_inport(ctx), d);
+                    unget_char(ctx, ctx_inport(ctx), d);
                     return TOK_ELLIPSIS;
                 } else {
-                    unget_char(ctx_inport(ctx), d);
-                    unget_char(ctx_inport(ctx), b);
+                    unget_char(ctx, ctx_inport(ctx), d);
+                    unget_char(ctx, ctx_inport(ctx), b);
                 }
             } else {
-                unget_char(ctx_inport(ctx), b);
+                unget_char(ctx, ctx_inport(ctx), b);
             }
         }
 
-        unget_char(ctx_inport(ctx), a);
-        unget_char(ctx_inport(ctx), c);
+        unget_char(ctx, ctx_inport(ctx), a);
+        unget_char(ctx, ctx_inport(ctx), c);
         return TOK_SYMBOL;
     }
     case '\'': return TOK_QUOTE;
     case '`': return TOK_QQUOTE;
     case '"': return TOK_DQUOTE;
     case ',':
-        c = get_char(ctx_inport(ctx));
+        c = get_char(ctx, ctx_inport(ctx));
         if (c == '@') return TOK_UNQUOTE_SPLICING;
-        else unget_char(ctx_inport(ctx), c);
+        else unget_char(ctx, ctx_inport(ctx), c);
         return TOK_UNQUOTE;
     case '#':
-        c = get_char(ctx_inport(ctx));
+        c = get_char(ctx, ctx_inport(ctx));
         if (c == '(') return TOK_VECTOR;
         else if (c == '!') {
             c = skip_line(ctx);
             if (c == EOF) return TOK_EOF;
             return get_token(ctx);
         } else if (strchr("tfeibodx\\", c)) {
-            unget_char(ctx_inport(ctx), c);
-            unget_char(ctx_inport(ctx), '#');
+            unget_char(ctx, ctx_inport(ctx), c);
+            unget_char(ctx, ctx_inport(ctx), '#');
             return TOK_CONST;
         }
         return TOK_ERR;
@@ -534,7 +571,7 @@ static int get_token(Cell *ctx) {
         if (c == EOF) return TOK_EOF;
         return get_token(ctx);
     default:
-        unget_char(ctx_inport(ctx), c);
+        unget_char(ctx, ctx_inport(ctx), c);
         return TOK_SYMBOL;
     }
 }
@@ -887,14 +924,14 @@ static Cell *read_illegal(Cell *ctx, int c) {
     return mk_exception(ctx, SyntaxError, mk_string(ctx, "unexpected symbol: %s", str), NULL, NULL);
 }
 
-static inline int read_upto(Cell *port, char *upto, char **out, uint *psize) {
+static inline int read_upto(Cell *ctx, Cell *port, char *upto, char **out, uint *psize) {
     int c;
     char *p = *out;
     uint size = *psize;
 
     for (;;) {
         if (p - *out < size) {
-            if ((c = get_char(port)) < 0) {
+            if ((c = get_char(ctx, port)) < 0) {
                 return EOF;
             }
             if (strchr(upto, c))
@@ -916,7 +953,7 @@ static inline int read_upto(Cell *port, char *upto, char **out, uint *psize) {
             }
         }
     }
-    unget_char(port, c);
+    unget_char(ctx, port, c);
     *p = '\0';
     return p - *out;
 }
@@ -1770,7 +1807,7 @@ static Cell *read_symbol(Cell *ctx, int _) {
     uint size = STR_BUF_SIZE;
     char buf[STR_BUF_SIZE] = "";
     char *p = buf;
-    int total_len = read_upto(ctx_inport(ctx), CSTR(DELIMITERS), &p, &size);
+    int total_len = read_upto(ctx, ctx_inport(ctx), CSTR(DELIMITERS), &p, &size);
 
     if (total_len <= 0) {
         return CELL_EOF;
@@ -1794,7 +1831,7 @@ static Cell *read_const(Cell *ctx, int c) {
     uint size = STR_BUF_SIZE;
     char buf[STR_BUF_SIZE] = "";
     char *p = buf;
-    int total_len = read_upto(ctx_inport(ctx), CSTR(DELIMITERS), &p, &size);
+    int total_len = read_upto(ctx, ctx_inport(ctx), CSTR(DELIMITERS), &p, &size);
     Cell *num = NULL;
     char *pend = NULL;
     Exactness exact = NO_EXACTNESS;
@@ -1888,7 +1925,7 @@ static Cell *read_string(Cell *ctx, int q) {
     int buf_size = STR_BUF_SIZE;
     int idx = 0;
     int c;
-    while ((c = get_char(port)) > 0 && c != '\"')
+    while ((c = get_char(ctx, port)) > 0 && c != '\"')
     {
         if (idx >= buf_size) {
             char *tmp;
@@ -1904,7 +1941,7 @@ static Cell *read_string(Cell *ctx, int q) {
         }
         if ('\\' == c)
         {
-            c = get_char(port);
+            c = get_char(ctx, port);
             switch (c) {
             case 'a': c = '\a'; break;
             case 'b': c = '\b'; break;
@@ -2601,7 +2638,7 @@ Loop:
         print_cell(ctx, ctx_outport(ctx), ctx_ret(ctx));
         if (is_interactive(ctx)) {
             int c;
-            while ((c = get_char(ctx_inport(ctx))) != '\n' && c != EOF);
+            while ((c = get_char(ctx, ctx_inport(ctx))) != '\n' && c != EOF);
             ctx_args(ctx) = CELL_NIL;
             ctx_env(ctx) = ctx_global_env(ctx);
             gotoOp(ctx, OP_REPL_LOOP);
@@ -3526,6 +3563,27 @@ Loop:
         if (is_exception(c))
             gotoErr(ctx, c);
         gotoOp(ctx, OP_REPL_LOOP);
+    case OP_TRANSCRIPT_ON: {
+        if (ctx_transc_port(ctx)) {
+            port_close(ctx, ctx_transc_port(ctx));
+        }
+        a = car(ctx_args(ctx));
+        char *name = string(a);
+        FILE *trsf = fopen(name, "w+");
+        if (!trsf) {
+            gotoErr(ctx, mk_exception(ctx, IOError, mk_string(ctx, "transcript-on: can not open file:%s", name), NULL, NULL));
+        }
+        ctx_transc_port(ctx) = mk_port(ctx, trsf, name, PORT_FILE);
+        ctx_transc_idx(ctx) = ctx_inbuf_idx(ctx);
+        ctx_transc_inportp(ctx) = false;
+        popOp(ctx, CELL_UNDEF);
+    }
+    case OP_TRANSCRIPT_OFF:
+        if (ctx_transc_port(ctx)) {
+            port_close(ctx, ctx_transc_port(ctx));
+            ctx_transc_port(ctx) = NULL;
+        }
+        popOp(ctx, CELL_UNDEF);
     case OP_DISPLAY: {
         int len = length(ctx_args(ctx));
         if (len == 1) {
@@ -4033,7 +4091,10 @@ Cell *ischeme_ctx_new() {
     init_readers();
     ctx_inports(ctx) = vector<Cell*>();
     ctx_inport(ctx) = NULL;
+    ctx_inbuf_idx(ctx) = -1;
+    ctx_inbuf_len(ctx) = 0;
     ctx_outport(ctx) = mk_port(ctx, stdout, NULL, PORT_FILE | PORT_OUTPUT);
+    ctx_transc_port(ctx) = NULL;
     ctx_instructs(ctx) = CELL_NIL;
     ctx_winds(ctx) = CELL_NIL;
     ctx_saves(ctx) = NULL;

@@ -78,7 +78,7 @@ _OPCODE("null-environment",               IPROC,      OP_NULL_ENV,              
 _OPCODE("interaction-environment",        IPROC,      OP_INTERACTION_ENV,         0,  0,  0)
 
 _OPCODE("load",                           IPROC,      OP_LOAD,                    1,  1,  T_STRING)
-_OPCODE("transcript-on",                  IPROC,      OP_TRANSCRIPT_ON,           0,  0,  0)
+_OPCODE("transcript-on",                  IPROC,      OP_TRANSCRIPT_ON,           1,  1,  T_STRING)
 _OPCODE("transcript-off",                 IPROC,      OP_TRANSCRIPT_OFF,          0,  0,  0)
 _OPCODE("display",                        IPROC,      OP_DISPLAY,                 1,  2,  T_ANY T_OUTPORT)
 _OPCODE("newline",                        IPROC,      OP_NEWLINE,                 0,  1,  T_OUTPORT)

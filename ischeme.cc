@@ -3,6 +3,7 @@
 #include <stdarg.h>
 #include <ctype.h>
 #include <math.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include "ischeme.h"
 #include "cell.h"
@@ -134,17 +135,29 @@ static Cell *mk_string(Cell *ctx, const char *fmt, ...) {
     va_start(ap, fmt);
     size = vsnprintf(NULL, size, fmt, ap);
     va_end(ap);
-
-    size++;
-    c = (Cell*)cell_alloc(ctx, cell_sizeof(str) + size);
+    c = (Cell*)cell_alloc(ctx, cell_sizeof(str) + size + 1);
     cell_type(c) = STRING;
     cell_ptrtag(c) = POINTER_TAG;
     string_size(c) = size;
     string_data(c) = (char*)(&string_data(c) + 1);
     va_start(ap, fmt);
-    size = vsnprintf(string_data(c), size, fmt, ap);
+    vsnprintf(string_data(c), size + 1, fmt, ap);
     va_end(ap);
     return c;
+}
+
+static Cell *mk_string(Cell *ctx, uint size, char fill) {
+    Cell *c = (Cell*)cell_alloc(ctx, cell_sizeof(str) + size + 1);
+    cell_type(c) = STRING;
+    cell_ptrtag(c) = POINTER_TAG;
+    string_size(c) = size;
+    string_data(c) = (char*)(&string_data(c) + 1);
+    memset(string_data(c), fill, size);
+    return c;
+}
+
+static Cell *mk_string(Cell *ctx, uint size) {
+    return mk_string(ctx, size, ' ');
 }
 
 static Cell *mk_symbol(Cell *ctx, const char *s) {
@@ -218,7 +231,7 @@ static Cell *mk_promise(Cell *ctx, Cell *expr) {
 
 static Cell *mk_port(Cell *ctx, FILE *f, const char *name, int t) {
     gc_var1(c);
-    c = port_new(ctx);
+    c = port_file_new(ctx);
     port_type(c) = t;
     port_file(c) = f;
     if (name) {
@@ -226,11 +239,13 @@ static Cell *mk_port(Cell *ctx, FILE *f, const char *name, int t) {
         port_file_name(c) = mk_string(ctx, name);
         gc_release(ctx);
     }
+    port_file_bufidx(c) = -1;
+    port_file_buflen(c) = 0;
     return c;
 }
 
 static Cell *mk_port(Cell *ctx, char *start, char *end, int t) {
-    Cell *c = port_new(ctx);
+    Cell *c = port_string_new(ctx);
     port_type(c) = t;
     port_string_start(c) = start;
     port_string_pos(c) = start;
@@ -280,7 +295,7 @@ static void print_err(Cell *ctx, char *etype, char *ebody, ...) {
     va_list ap;
     va_start(ap, ebody);
 
-    Cell *out = ctx_outport(ctx);
+    Cell *out = ctx_stderrport(ctx);
     fprintf(port_file(out), "%s", etype);
     fprintf(port_file(out), ": ");
     vfprintf(port_file(out), ebody, ap);
@@ -338,8 +353,8 @@ static Cell *push_load_file(Cell *ctx, char *name) {
         snprintf(buf, sizeof(buf), "can not open file \"%s\"", name);
         return mk_exception(ctx, IOError, mk_string(ctx, buf), NULL, NULL);
     }
-    ctx_inports_push(ctx, mk_port(ctx, fin, name, PORT_FILE | PORT_INPUT));
-    ctx_inport(ctx) = ctx_inports_tail(ctx);
+    ctx_inport(ctx) = mk_port(ctx, fin, name, PORT_INPUT_FILE);
+    ctx_inports_push(ctx, ctx_inport(ctx));
     return ctx_inport(ctx);
 }
 
@@ -352,7 +367,7 @@ static void pop_load_file(Cell *ctx) {
 }
 
 Cell *write_char(Cell *ctx, Cell *out, int c) {
-	if(port_type(out) & PORT_FILE) {
+	if(port_type(out) & PORT_OUTPUT_FILE) {
         c = fputc(c, port_file(out));
         port_flush(out);
         if (ctx_transc_port(ctx) && (port_file(out) == stdout || port_file(out) == stderr)) {
@@ -364,7 +379,7 @@ Cell *write_char(Cell *ctx, Cell *out, int c) {
             port_flush(ctx_transc_port(ctx));
         }
 		return CELL_UNDEF;
-	} else {
+	} else if (port_type(out) & PORT_OUTPUT_STRING) {
 		if(port_string_end(out) <= port_string_pos(out)) {
            return mk_exception(ctx, MemoryError, mk_string(ctx, "write char out of range"), NULL, NULL);
         }
@@ -376,7 +391,7 @@ Cell *write_char(Cell *ctx, Cell *out, int c) {
 
 Cell *write_string(Cell *ctx, Cell *out, const char *s) {
 	int len = strlen(s);
-	if (port_type(out) & PORT_FILE) {
+	if (port_type(out) & PORT_OUTPUT_FILE) {
         len = fwrite(s, 1, len, port_file(out));
         port_flush(out);
         if (ctx_transc_port(ctx) && (port_file(out) == stdout || port_file(out) == stderr)) {
@@ -388,7 +403,7 @@ Cell *write_string(Cell *ctx, Cell *out, const char *s) {
             port_flush(ctx_transc_port(ctx));
         }
 		return CELL_UNDEF;
-	} else if (port_type(out) & PORT_STRING) {
+	} else if (port_type(out) & PORT_OUTPUT_STRING) {
 	    if (len > port_string_end(out) - port_string_pos(out)) {
            return mk_exception(ctx, MemoryError, mk_string(ctx, "write string out of range"), NULL, NULL);
         }
@@ -398,35 +413,48 @@ Cell *write_string(Cell *ctx, Cell *out, const char *s) {
     return mk_exception(ctx, IOError, mk_string(ctx, "invalid out port"), NULL, NULL);
 }
 
+static int char_ready_p (Cell *port) {
+    FILE *in = port_file(port);
+    int flags = fcntl(fileno(in), F_GETFL), res;
+    if (!(flags & O_NONBLOCK)) fcntl(fileno(in), F_SETFL, flags | O_NONBLOCK);
+    res = getc(in);
+    if (!(flags & O_NONBLOCK)) fcntl(fileno(in), F_SETFL, flags);
+    if (res == EOF || ferror(in)) {
+        clearerr(in);
+        return false;
+    }
+    ungetc(res, in);
+    return true;
+}
+
 static inline int get_char(Cell *ctx, Cell *in) {
-    if (is_port_eof(in)) return EOF;
-    int c = 0;
-    if (port_type(in) & PORT_FILE) {
-        bool fresh = false;
-        if (++ctx_inbuf_idx(ctx) < ctx_inbuf_len(ctx)) {
-            c = ctx_inbuf(ctx)[ctx_inbuf_idx(ctx)];
+    int c = EOF;
+    if (port_type(in) & PORT_INPUT_FILE) {
+        if (is_interactive(ctx)) {
+            c = fgetc(port_file(in));
+            if (c == EOF) return EOF;
+        } else if (++port_file_bufidx(in) < port_file_buflen(in)) {
+            c = port_file_buf(in)[port_file_bufidx(in)];
         } else {
-            char *s = fgets(ctx_inbuf(ctx), IN_BUF_SIZE, port_file(in));
+            char *s = fgets(port_file_buf(in), PORT_BUF_SIZE, port_file(in));
             if (!s) {
                 return EOF;
             }
             c = s[0];
-            ctx_inbuf_len(ctx) = strlen(s);
-            ctx_inbuf_idx(ctx) = 0;
-            fresh = true;
+            port_file_buflen(in) = strlen(s);
+            port_file_bufidx(in) = 0;
         }
+        
         if (ctx_transc_port(ctx) && port_file(in) == stdin) {
-            if (ctx_transc_idx(ctx) < ctx_inbuf_idx(ctx) || fresh) {
-                if (!ctx_transc_inportp(ctx) && c == '\n') {
-                    ctx_transc_inportp(ctx) = true;
-                    return c;
-                }
-                ctx_transc_idx(ctx) = ctx_inbuf_idx(ctx);
-                fputc(c, port_file(ctx_transc_port(ctx)));
-                port_flush(ctx_transc_port(ctx));
+            if (!ctx_transc_inportp(ctx) && c == '\n') {
+                ctx_transc_inportp(ctx) = true;
+                return c;
             }
+            ctx_transc_idx(ctx) = port_file_bufidx(in);
+            fputc(c, port_file(ctx_transc_port(ctx)));
+            port_flush(ctx_transc_port(ctx));
         }
-    } else {
+    } else if (port_type(in) & PORT_INPUT_STRING) {
         if (port_string_pos(in) == 0 || port_string_pos(in) == port_string_end(in))
             c == EOF;
         else
@@ -437,55 +465,63 @@ static inline int get_char(Cell *ctx, Cell *in) {
 
 static inline void unget_char(Cell *ctx, Cell *out, int c) {
     if (c == EOF) return;
-    if (port_type(out) & PORT_FILE) {
-        --ctx_inbuf_idx(ctx);
-    } else {
+    if (is_interactive(ctx)) {
+        ungetc(c, port_file(out));
+    } else if (port_type(out) & PORT_INPUT_FILE) {
+        --port_file_bufidx(out);
+    } else if (port_type(out) & PORT_INPUT_STRING) {
         if (port_string_pos(out) != port_string_start(out)) --port_string_pos(out);
     }
 }
 
-static inline int skip_line(Cell *ctx) {
+static inline int peek_char(Cell *ctx, Cell *in) {
+    int c = get_char(ctx, in);
+    unget_char(ctx, in, c);
+    return c;
+}
+
+static inline int skip_line(Cell *ctx, Cell *port) {
     int c = 0, n = 0;
-    while ((c = get_char(ctx, ctx_inport(ctx))) != EOF && c != '\n') ++n;
+    while ((c = get_char(ctx, port)) != EOF && c != '\n') ++n;
     if (c == '\n') {
-        if (ctx_inports_tail(ctx) && port_type(ctx_inports_tail(ctx)) & PORT_FILE)
-            ++port_file_pos(ctx_inports_tail(ctx));
+        if (port_type(port) & PORT_INPUT_FILE)
+            ++port_file_pos(port);
         return ++n;
     }
     return EOF;
 }
 
-static int skip_comment(Cell *ctx, int c) {
+static inline int skip_comment(Cell *ctx, Cell *port, int c) {
     int n = 0;
     if (c == EOF) return EOF;
     if (c == ';') {
-        c = skip_line(ctx);
+        c = skip_line(ctx, port);
         if (c == EOF) return EOF;
         n += c;
     } else if (c == '#') {
-        c = get_char(ctx, ctx_inport(ctx));
+        c = get_char(ctx, port);
         if (c == EOF) return EOF;
         if (c != '!')  {
-            unget_char(ctx, ctx_inport(ctx), c);
-            unget_char(ctx, ctx_inport(ctx), '#');
+            unget_char(ctx, port, c);
+            unget_char(ctx, port, '#');
             return 0;
         }
         n += 2;
-        c = skip_line(ctx);
+        c = skip_line(ctx, port);
         if (c == EOF) return EOF;
         n += c;
     }
     return n;
 }
 
-static int skip_space(Cell *ctx) {
+static inline int skip_space(Cell *ctx, Cell *port) {
     int c = 0, sum = 0, line = 0;
     do {
-        c = get_char(ctx, ctx_inport(ctx));
+        c = get_char(ctx, port);
         ++sum;
         if (c == '\n') ++line;
         else if (c == ';' || c == '#') {
-            int n = skip_comment(ctx, c);
+            int n = skip_comment(ctx, port, c);
             if (n == EOF) return EOF;
             else if (n == 0) return sum;
             sum += n;
@@ -493,10 +529,10 @@ static int skip_space(Cell *ctx) {
             continue;
         }
     } while(isspace(c) || c == ';' || c == '#');
-    if (port_type(ctx_inports_tail(ctx)) & PORT_FILE)
-        port_file_pos(ctx_inports_tail(ctx)) += line;
+    if (port_type(port) & PORT_INPUT_FILE)
+        port_file_pos(port) += line;
     if (c != EOF) {
-        unget_char(ctx, ctx_inport(ctx), c);
+        unget_char(ctx, port, c);
         return --sum;
     }
     return EOF;
@@ -512,10 +548,10 @@ static Cell *reverse(Cell *ctx, Cell *old) {
     return ret;
 }
 
-static int get_token(Cell *ctx) {
-    int c = skip_space(ctx);
+static int get_token(Cell *ctx, Cell *port) {
+    int c = skip_space(ctx, port);
     if (c == EOF) return TOK_EOF;
-    switch (c = get_char(ctx, ctx_inport(ctx))) {
+    switch (c = get_char(ctx, port)) {
     case EOF: return TOK_EOF;
     case '(': return TOK_LPAREN;
     case ')': return TOK_RPAREN;
@@ -524,75 +560,75 @@ static int get_token(Cell *ctx) {
     case '{': return TOK_LBRACE;
     case '}': return TOK_RBRACE;
     case '.': {
-        if (skip_space(ctx) > 0) return TOK_DOT;
+        if (skip_space(ctx, port) > 0) return TOK_DOT;
         int a, b, d;
-        if ((a = get_char(ctx, ctx_inport(ctx))) == '.') {
-            if ((b = get_char(ctx, ctx_inport(ctx))) == '.') {
-                d = get_char(ctx, ctx_inport(ctx));
+        if ((a = get_char(ctx, port)) == '.') {
+            if ((b = get_char(ctx, port)) == '.') {
+                d = get_char(ctx, port);
                 if (strchr(DELIMITERS, d)) {
-                    unget_char(ctx, ctx_inport(ctx), d);
+                    unget_char(ctx, port, d);
                     return TOK_ELLIPSIS;
                 } else {
-                    unget_char(ctx, ctx_inport(ctx), d);
-                    unget_char(ctx, ctx_inport(ctx), b);
+                    unget_char(ctx, port, d);
+                    unget_char(ctx, port, b);
                 }
             } else {
-                unget_char(ctx, ctx_inport(ctx), b);
+                unget_char(ctx, port, b);
             }
         }
 
-        unget_char(ctx, ctx_inport(ctx), a);
-        unget_char(ctx, ctx_inport(ctx), c);
+        unget_char(ctx, port, a);
+        unget_char(ctx, port, c);
         return TOK_SYMBOL;
     }
     case '\'': return TOK_QUOTE;
     case '`': return TOK_QQUOTE;
     case '"': return TOK_DQUOTE;
     case ',':
-        c = get_char(ctx, ctx_inport(ctx));
+        c = get_char(ctx, port);
         if (c == '@') return TOK_UNQUOTE_SPLICING;
-        else unget_char(ctx, ctx_inport(ctx), c);
+        else unget_char(ctx, port, c);
         return TOK_UNQUOTE;
     case '#':
-        c = get_char(ctx, ctx_inport(ctx));
+        c = get_char(ctx, port);
         if (c == '(') return TOK_VECTOR;
         else if (c == '!') {
-            c = skip_line(ctx);
+            c = skip_line(ctx, port);
             if (c == EOF) return TOK_EOF;
-            return get_token(ctx);
+            return get_token(ctx, port);
         } else if (strchr("tfeibodx\\", c)) {
-            unget_char(ctx, ctx_inport(ctx), c);
-            unget_char(ctx, ctx_inport(ctx), '#');
+            unget_char(ctx, port, c);
+            unget_char(ctx, port, '#');
             return TOK_CONST;
         }
         return TOK_ERR;
     case ';':
-        c = skip_line(ctx);
+        c = skip_line(ctx, port);
         if (c == EOF) return TOK_EOF;
-        return get_token(ctx);
+        return get_token(ctx, port);
     default:
-        unget_char(ctx, ctx_inport(ctx), c);
+        unget_char(ctx, port, c);
         return TOK_SYMBOL;
     }
 }
 
-static Cell *read_cell(Cell *ctx) {
-    int t = get_token(ctx);
+static Cell *read_cell(Cell *ctx, Cell *port) {
+    int t = get_token(ctx, port);
     if (t == TOK_ERR) {
         return mk_exception(ctx, SyntaxError, mk_string(ctx, "bad syntax"), NULL, NULL);
     } else if (t == TOK_EOF) {
         return CELL_EOF;
     }
-    return g_readers[t](ctx, t);
+    return g_readers[t](ctx, port, t);
 }
 
-static Cell *read_cell_by_token(Cell *ctx, int t) {
+static Cell *read_cell_by_token(Cell *ctx, Cell *port, int t) {
     if (t == TOK_ERR) {
         return mk_exception(ctx, SyntaxError, mk_string(ctx, "bad syntax"), NULL, NULL);
     } else if (t == TOK_EOF) {
         return CELL_EOF;
     }
-    return g_readers[t](ctx, t);
+    return g_readers[t](ctx, port, t);
 }
 
 static bool num_equal(Cell *a, Cell *b) {
@@ -902,7 +938,7 @@ static void env_add(Cell *ctx, Cell *env, Cell *k, Cell *v) {
     }
 }
 
-static Cell *read_illegal(Cell *ctx, int c) {
+static Cell *read_illegal(Cell *ctx, Cell *port, int c) {
     const char *str = "";
     switch (c) {
     case TOK_RPAREN:
@@ -1803,11 +1839,11 @@ Error:
     return CELL_NIL;
 }
 
-static Cell *read_symbol(Cell *ctx, int _) {
+static Cell *read_symbol(Cell *ctx, Cell *port, int _) {
     uint size = STR_BUF_SIZE;
     char buf[STR_BUF_SIZE] = "";
     char *p = buf;
-    int total_len = read_upto(ctx, ctx_inport(ctx), CSTR(DELIMITERS), &p, &size);
+    int total_len = read_upto(ctx, port, CSTR(DELIMITERS), &p, &size);
 
     if (total_len <= 0) {
         return CELL_EOF;
@@ -1825,13 +1861,14 @@ static Cell *read_symbol(Cell *ctx, int _) {
     return c;
 }
 
-static Cell *read_const(Cell *ctx, int c) {
+static Cell *read_const(Cell *ctx, Cell *port, int c) {
+    // TODO: read #\{ #\[ #\( error
     Cell *ret = NULL;
     Cell *real = NULL, *imag = NULL;
     uint size = STR_BUF_SIZE;
     char buf[STR_BUF_SIZE] = "";
     char *p = buf;
-    int total_len = read_upto(ctx, ctx_inport(ctx), CSTR(DELIMITERS), &p, &size);
+    int total_len = read_upto(ctx, port, CSTR(DELIMITERS), &p, &size);
     Cell *num = NULL;
     char *pend = NULL;
     Exactness exact = NO_EXACTNESS;
@@ -1917,11 +1954,10 @@ Error:
     return mk_exception(ctx, SyntaxError, mk_string(ctx, "bad syntax"), NULL, NULL);
 }
 
-static Cell *read_string(Cell *ctx, int q) {
+static Cell *read_string(Cell *ctx, Cell *port, int q) {
     char buf[STR_BUF_SIZE] = "";
     char *p = buf;
     Cell *ret = NULL;
-    Cell *port = ctx_inport(ctx);
     int buf_size = STR_BUF_SIZE;
     int idx = 0;
     int c;
@@ -1982,9 +2018,9 @@ Err:
    return ret;
 }
 
-static Cell *read_quote(Cell *ctx, int c) {
+static Cell *read_quote(Cell *ctx, Cell *port, int c) {
     gc_var2(c1, c2);
-    c1 = read_cell(ctx);
+    c1 = read_cell(ctx, port);
     if (c1 == CELL_EOF || is_exception(c1))
         return c1;
     gc_preserve2(ctx, c1, c2);
@@ -1993,9 +2029,9 @@ static Cell *read_quote(Cell *ctx, int c) {
     return c1;
 }
 
-static Cell *read_quasiquote(Cell *ctx, int c) {
+static Cell *read_quasiquote(Cell *ctx, Cell *port, int c) {
     gc_var2(c1, c2);
-    c1 = read_cell(ctx);
+    c1 = read_cell(ctx, port);
     if (c1 == CELL_EOF || is_exception(c1))
         return c1;
     gc_preserve2(ctx, c1, c2);
@@ -2004,9 +2040,9 @@ static Cell *read_quasiquote(Cell *ctx, int c) {
     return c1;
 }
 
-static Cell *read_unquote(Cell *ctx, int c) {
+static Cell *read_unquote(Cell *ctx, Cell *port, int c) {
     gc_var2(c1, c2);
-    c1 = read_cell(ctx);
+    c1 = read_cell(ctx, port);
     if (c1 == CELL_EOF || is_exception(c1))
         return c1;
     gc_preserve2(ctx, c1, c2);
@@ -2015,9 +2051,9 @@ static Cell *read_unquote(Cell *ctx, int c) {
     return c1;
 }
 
-static Cell *read_unquote_splicing(Cell *ctx, int c) {
+static Cell *read_unquote_splicing(Cell *ctx, Cell *port, int c) {
     gc_var2(c1, c2);
-    c1 = read_cell(ctx);
+    c1 = read_cell(ctx, port);
     if (c1 == CELL_EOF || is_exception(c1))
         return c1;
     gc_preserve2(ctx, c1, c2);
@@ -2026,14 +2062,14 @@ static Cell *read_unquote_splicing(Cell *ctx, int c) {
     return c1;
 }
 
-static Cell *read_vector(Cell *ctx, int c) {
+static Cell *read_vector(Cell *ctx, Cell *port, int c) {
     uint len = 0;
     gc_var3(head, tail, cell);
     gc_preserve3(ctx, head, tail, cell);
     cell = CELL_NIL;
     head = tail = cons(ctx, CELL_NIL, CELL_NIL);
     for (;;) {
-        c = get_token(ctx);
+        c = get_token(ctx, port);
         if (c == TOK_EOF) {
             gc_release(ctx);
             return mk_exception(ctx, SyntaxError, mk_string(ctx, "unexpected eof"), NULL, NULL);
@@ -2050,7 +2086,7 @@ static Cell *read_vector(Cell *ctx, int c) {
         } else if (c == TOK_ELLIPSIS) {
             cell = CELL_ELLIPSIS;
         } else {
-            cell = read_cell_by_token(ctx, c);
+            cell = read_cell_by_token(ctx, port, c);
         }
         if (cell == CELL_EOF || is_exception(cell)) {
             gc_release(ctx);
@@ -2069,7 +2105,7 @@ static Cell *read_vector(Cell *ctx, int c) {
     return cell;
 }
 
-static Cell *read_list(Cell *ctx, int c) {
+static Cell *read_list(Cell *ctx, Cell *port, int c) {
     gc_var3(head, tail, cell);
     gc_preserve3(ctx, head, tail, cell);
     cell = CELL_NIL;
@@ -2082,9 +2118,8 @@ static Cell *read_list(Cell *ctx, int c) {
     }
 
     int d;
-    Cell *port = ctx_inport(ctx);
     for (;;) {
-        d = get_token(ctx);
+        d = get_token(ctx, port);
         if (d == TOK_EOF) {
             gc_release(ctx);
             return mk_exception(ctx, SyntaxError, mk_string(ctx, "unexpected eof"), NULL, NULL);
@@ -2100,13 +2135,13 @@ static Cell *read_list(Cell *ctx, int c) {
                 gc_release(ctx);
                 return mk_exception(ctx, SyntaxError, mk_string(ctx, "illegal used of dot"), NULL, NULL);
             }
-            cell = read_cell(ctx);
+            cell = read_cell(ctx, port);
             if (cell == CELL_EOF || is_exception(cell)) {
                 gc_release(ctx);
                 return cell;
             }
             tail = rplacd(tail, cell);
-            c = get_token(ctx);
+            c = get_token(ctx, port);
             if (c != TOK_RPAREN) {
                 gc_release(ctx);
                 return mk_exception(ctx, SyntaxError, mk_string(ctx, "illegal used of dot"), NULL, NULL);
@@ -2115,7 +2150,7 @@ static Cell *read_list(Cell *ctx, int c) {
         } else if (d == TOK_ELLIPSIS) {
             cell = CELL_ELLIPSIS;
         } else {
-            cell = read_cell_by_token(ctx, d);
+            cell = read_cell_by_token(ctx, port, d);
         }
         if (cell == CELL_EOF || is_exception(cell)) {
             gc_release(ctx);
@@ -2563,9 +2598,9 @@ static Cell *syntax_transform(Cell *ctx, Cell *machers, Cell *syn_env, Cell *exp
         return mk_exception(ctx, SyntaxError, mk_string(ctx, "unmatched pattern"), NULL, NULL);
     }
     #ifdef MACRO_DEBUG
-    write_string(ctx, ctx_outport(ctx), "\n*Macro match dict*\n");
-    print_cell(ctx, ctx_outport(ctx), cdr(md));
-    write_char(ctx, ctx_outport(ctx), '\n');
+    write_string(ctx, ctx_stdoutport(ctx), "\n*Macro match dict*\n");
+    print_cell(ctx, ctx_stdoutport(ctx), cdr(md));
+    write_char(ctx, ctx_stdoutport(ctx), '\n');
     #endif
     tmpl = syntax_template_expand(ctx, tmpl, cdr(md), expr_env, tmp = cons(ctx, CELL_NIL, CELL_NIL));
     gc_release(ctx);
@@ -2596,13 +2631,13 @@ Loop:
         if (is_interactive(ctx)) {
             ctx_instructs(ctx) = CELL_NIL;
             if (ctx_inports_size(ctx) == 1) {
-                write_string(ctx, ctx_outport(ctx), ">> ");
+                write_string(ctx, ctx_stdoutport(ctx), ">> ");
             }
         }
         pushOp(ctx, OP_REPL_LOOP, ctx_args(ctx), CELL_NIL);
         gotoOp(ctx, OP_REPL_READ);
     case OP_REPL_READ:
-        c = read_cell(ctx);
+        c = read_cell(ctx, ctx_inport(ctx));
         if (c == CELL_EOF) {
             if (ctx_inports_size(ctx) == 1) {
                 gc_release(ctx);
@@ -2625,17 +2660,17 @@ Loop:
         if (is_interactive(ctx)) {
             if (is_multivar(c)) {
                 for (Cell *ls=multivar_var(c); is_pair(ls); ls=cdr(ls)) {
-                    print_cell(ctx, ctx_outport(ctx), car(ls));
-                    write_string(ctx, ctx_outport(ctx), "\n");
+                    print_cell(ctx, ctx_stdoutport(ctx), car(ls));
+                    write_string(ctx, ctx_stdoutport(ctx), "\n");
                 }
             } else if (!is_undef(c)) {
-                print_cell(ctx, ctx_outport(ctx), c);
-                write_string(ctx, ctx_outport(ctx), "\n");
+                print_cell(ctx, ctx_stdoutport(ctx), c);
+                write_string(ctx, ctx_stdoutport(ctx), "\n");
             }
         }
         popOp(ctx, c);
     case OP_ERROR:
-        print_cell(ctx, ctx_outport(ctx), ctx_ret(ctx));
+        print_cell(ctx, ctx_stderrport(ctx), ctx_ret(ctx));
         if (is_interactive(ctx)) {
             int c;
             while ((c = get_char(ctx, ctx_inport(ctx))) != '\n' && c != EOF);
@@ -2764,9 +2799,9 @@ Loop:
                             gotoErr(ctx, ctx_code(ctx));
                         }
                         #ifdef MACRO_DEBUG
-                        write_string(ctx, ctx_outport(ctx), "\n*Macro transform code*\n");
-                        print_cell(ctx, ctx_outport(ctx), ctx_code(ctx));
-                        write_char(ctx, ctx_outport(ctx), '\n');
+                        write_string(ctx, ctx_stdoutport(ctx), "\n*Macro transform code*\n");
+                        print_cell(ctx, ctx_stdoutport(ctx), ctx_code(ctx));
+                        write_char(ctx, ctx_stdoutport(ctx), '\n');
                         #endif
                         ctx_code(ctx) = mk_closure(ctx, d = cons(ctx, CELL_NIL, ctx_code(ctx)), macro_env(c));
                         ctx_args(ctx) = CELL_NIL;
@@ -3573,8 +3608,8 @@ Loop:
         if (!trsf) {
             gotoErr(ctx, mk_exception(ctx, IOError, mk_string(ctx, "transcript-on: can not open file:%s", name), NULL, NULL));
         }
-        ctx_transc_port(ctx) = mk_port(ctx, trsf, name, PORT_FILE);
-        ctx_transc_idx(ctx) = ctx_inbuf_idx(ctx);
+        ctx_transc_port(ctx) = mk_port(ctx, trsf, name, PORT_OUTPUT_FILE);
+        ctx_transc_idx(ctx) = port_file_bufidx(ctx_inport(ctx));
         ctx_transc_inportp(ctx) = false;
         popOp(ctx, CELL_UNDEF);
     }
@@ -3587,7 +3622,7 @@ Loop:
     case OP_DISPLAY: {
         int len = length(ctx_args(ctx));
         if (len == 1) {
-            print_cell_readable(ctx, ctx_outport(ctx), car(ctx_args(ctx)));
+            print_cell_readable(ctx, ctx_stdoutport(ctx), car(ctx_args(ctx)));
         } else if (len == 2) {
             print_cell_readable(ctx, cadr(ctx_args(ctx)), car(ctx_args(ctx)));
         }
@@ -3595,9 +3630,159 @@ Loop:
     }
     case OP_NEWLINE:
         if (is_pair(ctx_args(ctx))) c = car(ctx_args(ctx));
-        else c = ctx_outport(ctx);
+        else c = ctx_stdoutport(ctx);
         write_char(ctx, c, '\n');
         popOp(ctx, CELL_UNDEF);
+    case OP_READ:
+        a = ctx_args(ctx);
+        if (is_pair(a)) {
+            c = read_cell(ctx, car(a));
+        } else {
+            c = read_cell(ctx, ctx_stdinport(ctx));
+        }
+        popOp(ctx, c);
+    case OP_WRITE:
+        a = ctx_args(ctx);
+        if (length(a) > 1) {
+            print_cell(ctx, cadr(a), car(a));
+        } else {
+            print_cell(ctx, ctx_stdoutport(ctx), car(a));
+        }
+        popOp(ctx, CELL_UNDEF);
+    case OP_READ_CHAR: {
+        int chr;
+        a = ctx_args(ctx);
+        if (is_pair(a)) {
+            chr = get_char(ctx, car(a));
+        } else {
+            chr = get_char(ctx, ctx_stdinport(ctx));
+        }
+        if (chr == EOF) {
+            c = CELL_EOF;
+        } else {
+            c = mk_char(ctx, chr);
+        }
+        popOp(ctx, c);
+    }
+    case OP_WRITE_CHAR:
+        a = ctx_args(ctx);
+        if (length(a) > 1) {
+            print_cell_readable(ctx, cadr(a), car(a));
+        } else {
+            print_cell_readable(ctx, ctx_stdoutport(ctx), car(a));
+        }
+        popOp(ctx, CELL_UNDEF);
+    case OP_PEEK_CHAR: {
+        int chr;
+        a = ctx_args(ctx);
+        if (is_pair(a)) {
+            chr = peek_char(ctx, car(a));
+        } else {
+            chr = peek_char(ctx, ctx_stdinport(ctx));
+        }
+        if (chr == EOF) {
+            c = CELL_EOF;
+        } else {
+            c = mk_char(ctx, chr);
+        }
+        popOp(ctx, c);
+    }
+    case OP_CHAR_READY_P:
+        a = ctx_args(ctx);
+        if (is_pair(a)) {
+            a = car(a);
+        } else {
+            a = ctx_stdinport(ctx);
+        }
+        popOp(ctx, char_ready_p(a) ? CELL_TRUE : CELL_FALSE);
+    case OP_EOF_OBJECT_P:
+        c = car(ctx_args(ctx));
+        popOp(ctx, is_eof(c) ? CELL_TRUE : CELL_FALSE);
+    case OP_OPEN_INPUT_FILE: {
+        a = car(ctx_args(ctx));
+        const char *nm = string(a);
+        if (!access(nm, F_OK | R_OK)) {
+            FILE *in = fopen(nm, "r");
+            if (!in) {
+                gotoErr(ctx, mk_exception(ctx, IOError, mk_string(ctx, "can not open file '%s'", nm), NULL, NULL));
+            }
+            popOp(ctx, mk_port(ctx, in, nm, PORT_INPUT_FILE));
+        }
+        gotoErr(ctx, mk_exception(ctx, IOError, mk_string(ctx, "can not open file '%s'", nm), NULL, NULL));
+    }
+    case OP_OPEN_OUTPUT_FILE: {
+        a = car(ctx_args(ctx));
+        const char *nm = string(a);
+        FILE *out = fopen(nm, "w");
+        if (!out) {
+            gotoErr(ctx, mk_exception(ctx, IOError, mk_string(ctx, "can not open file '%s'", nm), NULL, NULL));
+        }
+        popOp(ctx, mk_port(ctx, out, nm, PORT_OUTPUT_FILE));
+    }
+    case OP_CLOSE_INPUT_PORT:
+        a = car(ctx_args(ctx));
+        if (port_type(a) & PORT_INPUT) {
+            if (port_type(a) & PORT_INPUT_FILE) {
+                fclose(port_file(a));
+            }
+            port_type(a) = PORT_FREE;
+        }
+        popOp(ctx, CELL_UNDEF);
+    case OP_CLOSE_OUTPUT_PORT:
+        a = car(ctx_args(ctx));
+        if (port_type(a) & PORT_OUTPUT) {
+            if (port_type(a) & PORT_OUTPUT_FILE) {
+                fclose(port_file(a));
+            }
+            port_type(a) = PORT_FREE;
+        }
+        popOp(ctx, CELL_UNDEF);
+    case OP_CURR_INPUT_PORT:
+        popOp(ctx, ctx_stdinport(ctx));
+    case OP_CURR_OUTPUT_PORT:
+        popOp(ctx, ctx_stdoutport(ctx));
+    case OP_SET_CURR_INPUT_PORT:
+        ctx_stdinport(ctx) = car(ctx_args(ctx));
+        popOp(ctx, CELL_UNDEF);
+    case OP_SET_CURR_OUTPUT_PORT:
+        ctx_stdoutport(ctx) = car(ctx_args(ctx));
+        popOp(ctx, CELL_UNDEF);
+    case OP_CALL_WITH_INPUT_FILE:
+        a = ctx_args(ctx);
+        pushOp(ctx, OP_CALL_WITH_INPUT_FILE1, CELL_NIL, cadr(a));
+        gotoOpEx(ctx, OP_OPEN_INPUT_FILE, car(a), CELL_NIL, CELL_NIL, ctx_env(ctx));
+    case OP_CALL_WITH_INPUT_FILE1:
+        a = ctx_ret(ctx);
+        c = ctx_code(ctx);
+        pushOp(ctx, OP_CALL_WITH_INPUT_FILE2, CELL_NIL, a);
+        gotoOpEx(ctx, OP_APPLY, a, c, CELL_NIL, ctx_env(ctx));
+    case OP_CALL_WITH_INPUT_FILE2:
+        c = ctx_code(ctx);
+        if (port_type(c) & PORT_INPUT) {
+            if (port_type(c) & PORT_INPUT_FILE) {
+                fclose(port_file(c));
+            }
+            port_type(c) = PORT_FREE;
+        }
+        popOp(ctx, ctx_ret(ctx));
+    case OP_CALL_WITH_OUTPUT_FILE:
+        a = ctx_args(ctx);
+        pushOp(ctx, OP_CALL_WITH_OUTPUT_FILE1, CELL_NIL, cadr(a));
+        gotoOpEx(ctx, OP_OPEN_OUTPUT_FILE, car(a), CELL_NIL, CELL_NIL, ctx_env(ctx));
+    case OP_CALL_WITH_OUTPUT_FILE1:
+        a = ctx_ret(ctx);
+        c = ctx_code(ctx);
+        pushOp(ctx, OP_CALL_WITH_OUTPUT_FILE2, CELL_NIL, a);
+        gotoOpEx(ctx, OP_APPLY, a, c, CELL_NIL, ctx_env(ctx));
+    case OP_CALL_WITH_OUTPUT_FILE2:
+        c = ctx_code(ctx);
+        if (port_type(c) & PORT_OUTPUT) {
+            if (port_type(c) & PORT_OUTPUT_FILE) {
+                fclose(port_file(c));
+            }
+            port_type(c) = PORT_FREE;
+        }
+        popOp(ctx, ctx_ret(ctx));
     case OP_BOOLEAN_P:
         c = car(ctx_args(ctx));
         popOp(ctx, is_boolean(c) ? CELL_TRUE : CELL_FALSE);
@@ -3613,9 +3798,150 @@ Loop:
     case OP_CHAR_P:
         c = car(ctx_args(ctx));
         popOp(ctx, is_char(c) ? CELL_TRUE : CELL_FALSE);
+    case OP_CHAR_EP:
+        popOp(ctx, char_value(car(ctx_args(ctx))) == char_value(cadr(ctx_args(ctx))) ? CELL_TRUE : CELL_FALSE);
+    case OP_CHAR_LP:
+        popOp(ctx, char_value(car(ctx_args(ctx))) < char_value(cadr(ctx_args(ctx))) ? CELL_TRUE : CELL_FALSE);
+    case OP_CHAR_LEP:
+        popOp(ctx, char_value(car(ctx_args(ctx))) <= char_value(cadr(ctx_args(ctx))) ? CELL_TRUE : CELL_FALSE);
+    case OP_CHAR_GP:
+        popOp(ctx, char_value(car(ctx_args(ctx))) > char_value(cadr(ctx_args(ctx))) ? CELL_TRUE : CELL_FALSE);
+    case OP_CHAR_GEP:
+        popOp(ctx, char_value(car(ctx_args(ctx))) >= char_value(cadr(ctx_args(ctx))) ? CELL_TRUE : CELL_FALSE);
+    case OP_CHAR_CI_EP:
+        popOp(ctx, toupper(char_value(car(ctx_args(ctx)))) == toupper(char_value(cadr(ctx_args(ctx)))) ? CELL_TRUE : CELL_FALSE);
+    case OP_CHAR_CI_LP:
+        popOp(ctx, toupper(char_value(car(ctx_args(ctx)))) < toupper(char_value(cadr(ctx_args(ctx)))) ? CELL_TRUE : CELL_FALSE);
+    case OP_CHAR_CI_LEP:
+        popOp(ctx, toupper(char_value(car(ctx_args(ctx)))) <= toupper(char_value(cadr(ctx_args(ctx)))) ? CELL_TRUE : CELL_FALSE);
+    case OP_CHAR_CI_GP:
+        popOp(ctx, toupper(char_value(car(ctx_args(ctx)))) > toupper(char_value(cadr(ctx_args(ctx)))) ? CELL_TRUE : CELL_FALSE);
+    case OP_CHAR_CI_GEP:
+        popOp(ctx, toupper(char_value(car(ctx_args(ctx)))) >= toupper(char_value(cadr(ctx_args(ctx)))) ? CELL_TRUE : CELL_FALSE);
+    case OP_CHAR_ALPHA_P:
+        popOp(ctx, isalpha(char_value(car(ctx_args(ctx)))) ? CELL_TRUE : CELL_FALSE);
+    case OP_CHAR_NUMBER_P:
+        popOp(ctx, isdigit(char_value(car(ctx_args(ctx)))) ? CELL_TRUE : CELL_FALSE);
+    case OP_CHAR_SPACE_P:
+        popOp(ctx, isspace(char_value(car(ctx_args(ctx)))) ? CELL_TRUE : CELL_FALSE);
+    case OP_CHAR_UPPER_P:
+        popOp(ctx, isupper(char_value(car(ctx_args(ctx)))) ? CELL_TRUE : CELL_FALSE);
+    case OP_CHAR_LOWER_P:
+        popOp(ctx, islower(char_value(car(ctx_args(ctx)))) ? CELL_TRUE : CELL_FALSE);
+    case OP_CHAR_TO_INTEGER:
+        popOp(ctx, mk_long(ctx, char_value(car(ctx_args(ctx)))));
+    case OP_CHAR_UPCASE:
+        a = car(ctx_args(ctx));
+        if (isalpha(char_value(a)) && islower(char_value(a))) {
+            a = mk_char(ctx, toupper(char_value(a)));
+        }
+        popOp(ctx, a);
+    case OP_CHAR_DOWNCASE:
+        a = car(ctx_args(ctx));
+        if (isalpha(char_value(a)) && isupper(char_value(a))) {
+            a = mk_char(ctx, toupper(char_value(a)));
+        }
+        popOp(ctx, a);
+    case OP_STRING:
+        a = ctx_args(ctx);
+        c = mk_string(ctx, length(a));
+        for (uint i=0; is_pair(a); a=cdr(a), ++i) {
+            string_data(c)[i] = char_value(car(a));
+        }
+        popOp(ctx, c);
+    case OP_MAKE_STRING:
+        a = ctx_args(ctx);
+        if (length(a) > 1) {
+            popOp(ctx, mk_string(ctx, number_long(car(a)), char_value(cadr(a))));
+        }
+        popOp(ctx, mk_string(ctx, number_long(car(a))));
+    case OP_STRING_LENGTH:
+        popOp(ctx, mk_long(ctx, string_size(car(ctx_args(ctx)))));
+    case OP_STRING_REF: {
+        a = car(ctx_args(ctx));
+        uint idx = number_long(cadr(ctx_args(ctx)));
+        if (idx >= string_size(a)) {
+            gotoErr(ctx, mk_exception(ctx, IndexError, mk_string(ctx, "string-ref: index out of range: %d", idx), NULL, NULL));
+        }
+        popOp(ctx, mk_char(ctx, string_data(a)[idx]));
+    }
+    case OP_STRING_SET: {
+        a = car(ctx_args(ctx));
+        uint idx = number_long(cadr(ctx_args(ctx)));
+        if (idx >= string_size(a)) {
+            gotoErr(ctx, mk_exception(ctx, IndexError, mk_string(ctx, "string-set!: index out of range: %d", idx), NULL, NULL));
+        }
+        string_data(a)[idx] = char_value(caddr(ctx_args(ctx)));
+        popOp(ctx, CELL_UNDEF);
+    }
+    case OP_SUBSTRING: {
+        uint st = number_long(cadr(ctx_args(ctx)));
+        uint ed = number_long(caddr(ctx_args(ctx)));
+        a = car(ctx_args(ctx));
+        if (st > ed || ed > string_size(a)) {
+            gotoErr(ctx, mk_exception(ctx, IndexError, mk_string(ctx, "substring: range error"), NULL, NULL));
+        }
+        c = mk_string(ctx, ed - st);
+        memcpy(string_data(c), string_data(a) + st, ed - st);
+        popOp(ctx, c);
+    }
+    case OP_STRING_APPEND: {
+        uint sz = 0;     
+        for (a=ctx_args(ctx); is_pair(a); a=cdr(a)) {
+            sz += string_size(car(a));
+        }
+        c = mk_string(ctx, sz);
+        for (a=ctx_args(ctx), sz=0; is_pair(a); a=cdr(a)) {
+            b = car(a);
+            memcpy(string_data(c) + sz, string_data(b), string_size(b));
+            sz += string_size(b);
+        }
+        popOp(ctx, c);
+    }
+    case OP_STRING_COPY:
+        a = car(ctx_args(ctx));
+        c = mk_string(ctx, string_size(a));
+        memcpy(string_data(c), string_data(a), string_size(a));
+        popOp(ctx, c);
+    case OP_STRING_FILL:
+        a = car(ctx_args(ctx));
+        memset(string_data(a), char_value(cadr(ctx_args(ctx))), string_size(a));
+        popOp(ctx, CELL_UNDEF);
+    case OP_STRING_TO_SYMBOL:
+        popOp(ctx, mk_symbol(ctx, string_data(car(ctx_args(ctx)))));
+    case OP_STRING_TO_LIST:
+        a = car(ctx_args(ctx));
+        c = CELL_NIL;
+        for (uint i=0; i<string_size(a); ++i) {
+            c = cons(ctx, mk_char(ctx, string_data(a)[i]), c);
+        }
+        popOp(ctx, reverse(ctx, c));
+    // TODO:
+    case OP_STRING_TO_NUMBER:
+        break;
     case OP_STRING_P:
         c = car(ctx_args(ctx));
         popOp(ctx, is_string(c) ? CELL_TRUE : CELL_FALSE);
+    case OP_STRING_EP:
+        popOp(ctx, !strcmp(string_data(car(ctx_args(ctx))), string_data(cadr(ctx_args(ctx)))) ? CELL_TRUE : CELL_FALSE);
+    case OP_STRING_LP:
+        popOp(ctx, strcmp(string_data(car(ctx_args(ctx))), string_data(cadr(ctx_args(ctx)))) < 0 ? CELL_TRUE : CELL_FALSE);
+    case OP_STRING_LEP:
+        popOp(ctx, strcmp(string_data(car(ctx_args(ctx))), string_data(cadr(ctx_args(ctx)))) <= 0 ? CELL_TRUE : CELL_FALSE);
+    case OP_STRING_GP:
+        popOp(ctx, strcmp(string_data(car(ctx_args(ctx))), string_data(cadr(ctx_args(ctx)))) > 0 ? CELL_TRUE : CELL_FALSE);
+    case OP_STRING_GEP:
+        popOp(ctx, strcmp(string_data(car(ctx_args(ctx))), string_data(cadr(ctx_args(ctx)))) >= 0 ? CELL_TRUE : CELL_FALSE);
+    case OP_STRING_CI_EP:
+        popOp(ctx, !strcasecmp(string_data(car(ctx_args(ctx))), string_data(cadr(ctx_args(ctx)))) ? CELL_TRUE : CELL_FALSE);
+    case OP_STRING_CI_LP:
+        popOp(ctx, strcasecmp(string_data(car(ctx_args(ctx))), string_data(cadr(ctx_args(ctx)))) < 0 ? CELL_TRUE : CELL_FALSE);
+    case OP_STRING_CI_LEP:
+        popOp(ctx, strcasecmp(string_data(car(ctx_args(ctx))), string_data(cadr(ctx_args(ctx)))) <= 0 ? CELL_TRUE : CELL_FALSE);
+    case OP_STRING_CI_GP:
+        popOp(ctx, strcasecmp(string_data(car(ctx_args(ctx))), string_data(cadr(ctx_args(ctx)))) > 0 ? CELL_TRUE : CELL_FALSE);
+    case OP_STRING_CI_GEP:
+        popOp(ctx, strcasecmp(string_data(car(ctx_args(ctx))), string_data(cadr(ctx_args(ctx)))) >= 0 ? CELL_TRUE : CELL_FALSE);
     case OP_NOT:
         c = car(ctx_args(ctx));
         popOp(ctx, is_false(c) ? CELL_TRUE : CELL_FALSE);
@@ -3631,11 +3957,31 @@ Loop:
     case OP_EQUAL_P:
         c = equal(car(ctx_args(ctx)), cadr(ctx_args(ctx))) ? CELL_TRUE : CELL_FALSE;
         popOp(ctx, c);
-    case OP_LIST:
-        popOp(ctx, ctx_args(ctx));
     case OP_LIST_P:
         c = car(ctx_args(ctx));
         popOp(ctx, is_list(c) ? CELL_TRUE : CELL_FALSE);
+    case OP_LIST:
+        popOp(ctx, ctx_args(ctx));
+    case OP_LIST_TO_STRING:
+        a = car(ctx_args(ctx));
+        b = mk_string(ctx, length(a));
+        for (uint i=0; is_pair(a); a=cdr(a), ++i) {
+            c = car(a);
+            if (!is_char(c)) {
+                gotoErr(ctx, mk_exception(ctx, TypeError, mk_string(ctx, "list->string: not a character list"), NULL, NULL));
+            }
+            string_data(b)[i] = char_value(c);
+        }
+        popOp(ctx, b);
+    case OP_LIST_TO_VECTOR:
+        a = car(ctx_args(ctx));
+        c = mk_vector(ctx, length(a), CELL_UNDEF);
+        for (uint i=0; is_pair(a); a=cdr(a), ++i) {
+            vector_data(c)[i] = car(a);
+        }
+        popOp(ctx, c);
+    case OP_SYMBOL_TO_STRING:
+        popOp(ctx, mk_string(ctx, symbol_data(car(ctx_args(ctx)))));
     case OP_CONS:
         c = ctx_args(ctx);
         popOp(ctx, cons(ctx, car(c), cadr(c)));
@@ -3679,13 +4025,13 @@ Loop:
         c = car(ctx_args(ctx));
         if (op == OP_LIST_TAIL) {
             if (idx > len) {
-                gotoErr(ctx, mk_exception(ctx, IndexError, mk_string(ctx, "index out of bounds"), NULL, NULL));
+                gotoErr(ctx, mk_exception(ctx, IndexError, mk_string(ctx, "index out of range: %d", idx), NULL, NULL));
             }
             for (uint i=1; i<=idx; ++i)
                 c = cdr(c);
         } else {
             if (idx >= len) {
-                gotoErr(ctx, mk_exception(ctx, IndexError, mk_string(ctx, "index out of bounds"), NULL, NULL));
+                gotoErr(ctx, mk_exception(ctx, IndexError, mk_string(ctx, "index out of range: %d", idx), NULL, NULL));
             }
             for (uint i=0; i<idx; ++i) {
                 c = cdr(c);
@@ -3758,7 +4104,7 @@ Loop:
         c = car(ctx_args(ctx));
         d = cadr(ctx_args(ctx));
         if (number_long(d) >= vector_length(c)) {
-            gotoErr(ctx, mk_exception(ctx, IndexError, mk_string(ctx, "index out of bounds:"), d, NULL));
+            gotoErr(ctx, mk_exception(ctx, IndexError, mk_string(ctx, "index out of range: %d", number_long(d)), NULL, NULL));
         }
         popOp(ctx, vector_data(c)[number_long(d)]);
     case OP_VECTOR_SET:
@@ -3766,7 +4112,7 @@ Loop:
         d = cadr(ctx_args(ctx));
         e = caddr(ctx_args(ctx));
         if (number_long(d) >= vector_length(c)) {
-            gotoErr(ctx, mk_exception(ctx, IndexError, mk_string(ctx, "index out of bounds:"), d, NULL));
+            gotoErr(ctx, mk_exception(ctx, IndexError, mk_string(ctx, "index out of range: %d", number_long(d)), NULL, NULL));
         }
         vector_data(c)[number_long(d)] = e;
         popOp(ctx, CELL_UNDEF);
@@ -3799,6 +4145,12 @@ Loop:
     case OP_PORT_P:
         c = car(ctx_args(ctx));
         popOp(ctx, is_port(c) ? CELL_TRUE : CELL_FALSE);
+    case OP_INPUT_PORT_P:
+        c = car(ctx_args(ctx));
+        popOp(ctx, is_inport(c) ? CELL_TRUE : CELL_FALSE);
+    case OP_OUTPUT_PORT_P:
+        c = car(ctx_args(ctx));
+        popOp(ctx, is_outport(c) ? CELL_TRUE : CELL_FALSE);
 
 /************* numeric ************/
     case OP_ODD_P:
@@ -3884,7 +4236,7 @@ static Cell *isc_init(PortType pt, FILE *in, char *src) {
     ctx = ischeme_ctx_new();
     gc_preserve1(ctx, ctx);
     if (pt == PORT_STDIN) {
-        port = mk_port(ctx, stdin, "stdin", pt);
+        port = ctx_stdinport(ctx);
     } else if (pt == PORT_INPUT_FILE) {
         port = mk_port(ctx, in, src, pt);
     } else if (pt == PORT_INPUT_STRING) {
@@ -3902,6 +4254,7 @@ bool _fc##_f(Cell *c) { \
 }
 def_func(is_any)
 def_func(is_char)
+def_func(is_letter)
 def_func(is_number)
 def_func(is_real)
 def_func(is_integer)
@@ -3926,6 +4279,7 @@ static struct {
 } g_arg_inspector[] = {
     {is_any_f,      0},
     {is_char_f,     "character"},
+    {is_letter_f,   "letter"},
     {is_number_f,   "number"},
     {is_real_f,     "real"},
     {is_integer_f,  "integer"},
@@ -4012,7 +4366,7 @@ void isc_helper() {
 }
 
 int main(int argc, char *argv[]) {
-    PortType pt = PORT_FILE;
+    PortType pt = PORT_FREE;
     FILE *in = NULL;
     char *str = NULL;
     if (argc == 1) {
@@ -4031,7 +4385,7 @@ int main(int argc, char *argv[]) {
                 IError("invalid arguments");
                 return -1;
             }
-            pt = PORT_STRING;
+            pt = PORT_INPUT_STRING;
             str = argv[2];
         } else if (!access(argv[1], F_OK | R_OK)) {
             pt = PORT_INPUT_FILE;
@@ -4090,10 +4444,10 @@ Cell *ischeme_ctx_new() {
     g_false.t = BOOLEAN;
     init_readers();
     ctx_inports(ctx) = vector<Cell*>();
-    ctx_inport(ctx) = NULL;
-    ctx_inbuf_idx(ctx) = -1;
-    ctx_inbuf_len(ctx) = 0;
-    ctx_outport(ctx) = mk_port(ctx, stdout, NULL, PORT_FILE | PORT_OUTPUT);
+    ctx_stdinport(ctx) = mk_port(ctx, stdin, NULL, PORT_STDIN);
+    ctx_stdoutport(ctx) = mk_port(ctx, stdout, NULL, PORT_STDOUT);
+    ctx_stderrport(ctx) = mk_port(ctx, stderr, NULL, PORT_STDERR);
+    ctx_inport(ctx) = ctx_stdinport(ctx);
     ctx_transc_port(ctx) = NULL;
     ctx_instructs(ctx) = CELL_NIL;
     ctx_winds(ctx) = CELL_NIL;
@@ -4124,6 +4478,9 @@ Cell *ischeme_ctx_new() {
     }
     env_add(ctx, std_env, internal(ctx, "call/cc"),
             cdr(find_env(std_env, internal(ctx, g_opcodes[OP_CALLCC].name))));
+    c = ischeme_port_new(ctx, PORT_INPUT_FILE, "lib/init.isc");
+    ischeme_eval(ctx, c);
+    ischeme_port_close(ctx, c);
     gc_release(ctx);
     return ctx;
 }
@@ -4150,14 +4507,23 @@ Cell *ischeme_port_new(Cell *ctx, PortType pt, const char *src) {
     return port; 
 }
 
+void ischeme_port_close(Cell *ctx, Cell *port) {
+    if (is_port(port) && (port_type(port) & PORT_FILE)) {
+        fclose(port_file(port));
+        port_type(port) = PORT_FREE;
+    }
+}
+
 Cell *ischeme_eval(Cell *ctx, Cell *port) {
     if (!ctx || !port || !(port_type(port) & PORT_INPUT)) {
         IError("invalid parameters");
         return NULL;
     }
+    ctx_inports_push(ctx, port);
     ctx_inport(ctx) = port;
-    ctx_inports_head(ctx) = ctx_inport(ctx);
-    return isc_repl(ctx);
+    isc_repl(ctx);
+    ctx_inports_pop(ctx);
+    return CELL_NIL;
 }
 
 Cell *ischeme_eval_string(Cell *ctx, const char *expr) {
@@ -4178,7 +4544,7 @@ Cell *ischeme_eval_file(Cell *ctx, const char *file) {
     return ischeme_eval(ctx, port);
 }
 void ischeme_print(Cell *ctx, Cell *c) {
-    print_cell(ctx, ctx_outport(ctx), c);
+    print_cell(ctx, ctx_stdoutport(ctx), c);
 }
 
 void ischeme_print_to(Cell *ctx, Cell *c, Cell *port) {

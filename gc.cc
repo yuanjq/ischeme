@@ -8,7 +8,7 @@
 
 #ifdef GC_DEBUG
 #include <sys/time.h>
-long g_gc_total = 0;
+int g_gc_total = 0;
 #endif
 
 struct SegFreeList {
@@ -167,6 +167,9 @@ static uint cell_mark(Cell *ctx, Cell *c) {
         n += cell_mark(ctx, ctx_r5rs_env(c));
         n += cell_mark(ctx, ctx_null_env(c));
         n += cell_mark(ctx, ctx_symbols(c));
+        n += cell_mark(ctx, ctx_stdinport(c));
+        n += cell_mark(ctx, ctx_stdoutport(c));
+        n += cell_mark(ctx, ctx_stderrport(c));
         n += cell_mark(ctx, ctx_inport(c));
         n += cell_mark(ctx, ctx_outport(c));
         if (ctx_transc_port(ctx)) {
@@ -278,7 +281,7 @@ static int _sizeof_cell(Cell *c) {
         break;
     case STRING:
     case SYMBOL:
-        s = cell_sizeof(str) + string_size(c);
+        s = cell_sizeof(str) + string_size(c) + 1;
         break;
     case SYNTAX:
     case IPROC:
@@ -293,7 +296,10 @@ static int _sizeof_cell(Cell *c) {
         s = cell_sizeof(vect) + vector_length(c) * S(Cell*);
         break;
     case PORT:
-        s = cell_sizeof(port);
+        if (port_type(c) & PORT_STRING) 
+            s = cell_sizeof(port.s);
+        else
+            s = cell_sizeof(port.f);
         break;
     case PROC:
         s = cell_sizeof(proc);

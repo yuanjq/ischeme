@@ -1,5 +1,10 @@
+DEBUG = 1
 CXX = g++
+ifeq ($(DEBUG), 1)
+CXXFLAGS += -std=c++11 -fPIC
+else
 CXXFLAGS += -std=c++11 -O2 -fPIC
+endif
 LDFLAGS += -lm
 
 TARGET = ischeme

@@ -41,7 +41,7 @@ typedef unsigned long           ulong;
 #define ISC_SEG_REDU_THRESHOLD  0.25
 #define ISC_SEG_GROW_RATIO      1.5
 #define STR_BUF_SIZE            256
-#define IN_BUF_SIZE             512
+#define PORT_BUF_SIZE           512
 
 #define POINTER_TAG             0xA745C39BuL
 #define T_MASK                  0x00FF
@@ -75,7 +75,8 @@ typedef unsigned long           ulong;
 #define symbol_new(c)           cell_new(c, str, SYMBOL)
 #define number_new(c)           cell_new(c, num, NUMBER)
 #define pair_new(c)             cell_new(c, pair, PAIR)
-#define port_new(c)             cell_new(c, port, PORT)
+#define port_file_new(c)        cell_new(c, port.f, PORT)
+#define port_string_new(c)      cell_new(c, port.s, PORT)
 #define instruct_new(c)         cell_new(c, inst, INSTRUCT)
 #define continue_new(c)         cell_new(c, cont, CONTINUE)
 #define procedure_new(c)        cell_new(c, eproc, EPROC)
@@ -117,10 +118,13 @@ typedef unsigned long           ulong;
 #define number_cx_rl(n)         (cell_field(n,num,cx.rl))
 #define number_cx_im(n)         (cell_field(n,num,cx.im))
 
-#define port_type(p)            (cell_field(p,port,t))
+#define port_type(p)            (cell_field(p,port.s,t))
 #define port_file(p)            (cell_field(p,port,f.file))
 #define port_file_name(p)       (cell_field(p,port,f.name))
 #define port_file_pos(p)        (cell_field(p,port,f.pos))
+#define port_file_buf(p)        (cell_field(p,port,f.buf))
+#define port_file_bufidx(p)     (cell_field(p,port,f.bidx))
+#define port_file_buflen(p)     (cell_field(p,port,f.blen))
 #define port_string_start(p)    (cell_field(p,port,s.start))
 #define port_string_end(p)      (cell_field(p,port,s.end))
 #define port_string_pos(p)      (cell_field(p,port,s.pos))
@@ -174,14 +178,14 @@ typedef unsigned long           ulong;
 #define ctx_r5rs_env(c)         (cell_field(c,ctx,r5rs_env))
 #define ctx_null_env(c)         (cell_field(c,ctx,null_env))
 #define ctx_symbols(c)          (cell_field(c,ctx,symbols))
+#define ctx_stdinport(c)        (cell_field(c,ctx,stdinport))
+#define ctx_stdoutport(c)       (cell_field(c,ctx,stdoutport))
+#define ctx_stderrport(c)       (cell_field(c,ctx,stderrport))
 #define ctx_inport(c)           (cell_field(c,ctx,inport))
 #define ctx_outport(c)          (cell_field(c,ctx,outport))
 #define ctx_transc_port(c)      (cell_field(c,ctx,trsport))
 #define ctx_transc_idx(c)       (cell_field(c,ctx,trsidx))
 #define ctx_transc_inportp(c)   (cell_field(c,ctx,trsinp))
-#define ctx_inbuf(c)            (cell_field(c,ctx,inbuf))
-#define ctx_inbuf_idx(c)        (cell_field(c,ctx,inbuf_idx))
-#define ctx_inbuf_len(c)        (cell_field(c,ctx,inbuf_len))
 #define ctx_inports(c)          (cell_field(c,ctx,inports))
 #define ctx_inports_head(c)     (ctx_inports(c).front())
 #define ctx_inports_tail(c)     (ctx_inports(c).back())
@@ -311,7 +315,7 @@ enum ExpanderType {
 };
 
 struct Cell;
-typedef Cell*(*Reader)(Cell*, int);
+typedef Cell*(*Reader)(Cell*, Cell*, int);
 typedef Cell*(*EProc)(Cell*, Cell*);
 
 struct String {
@@ -336,14 +340,18 @@ struct Number {
 };
 
 struct Port {
-    uint t;
     union {
         struct {
+            uint t;
             FILE *file;
             Cell *name;
             int pos;
+            char buf[PORT_BUF_SIZE];
+            int bidx;
+            int blen;
         } f;
         struct {
+            uint t;
             char *start;
             char *end;
             char *pos;
@@ -409,15 +417,15 @@ struct Context {
     Cell *r5rs_env;
     Cell *null_env;
     Cell *symbols;
+    Cell *stdinport;
+    Cell *stdoutport;
+    Cell *stderrport;
     Cell *inport;
     Cell *outport;
     Cell *trsport;
     bool trsinp;
     int trsidx;
     vector<Cell*> inports;
-    char inbuf[IN_BUF_SIZE];
-    int inbuf_idx;
-    int inbuf_len;
 
     Op op;
     Cell *ret;
@@ -522,22 +530,23 @@ struct OpCode {
 
 #define T_ANY       	"\001"
 #define T_CHAR      	"\002"
-#define T_NUMBER    	"\003"
-#define T_REAL      	"\004"
-#define T_INTEGER   	"\005"
-#define T_NATURAL   	"\006"
-#define T_STRING    	"\007"
-#define T_SYMBOL    	"\010"
-#define T_PAIR      	"\011"
-#define T_LIST      	"\012"
-#define T_VECTOR    	"\013"
-#define T_PROC      	"\014"
-#define T_ENV     	    "\015"
-#define T_CONTI     	"\016"
-#define T_PORT      	"\017"
-#define T_INPORT    	"\020"
-#define T_OUTPORT   	"\021"
-#define T_PROMISE       "\022"
+#define T_LETTER        "\003"
+#define T_NUMBER    	"\004"
+#define T_REAL      	"\005"
+#define T_INTEGER   	"\006"
+#define T_NATURAL   	"\007"
+#define T_STRING    	"\010"
+#define T_SYMBOL    	"\011"
+#define T_PAIR      	"\012"
+#define T_LIST      	"\013"
+#define T_VECTOR    	"\014"
+#define T_PROC      	"\015"
+#define T_ENV     	    "\016"
+#define T_CONTI     	"\017"
+#define T_PORT      	"\020"
+#define T_INPORT    	"\021"
+#define T_OUTPORT   	"\022"
+#define T_PROMISE       "\023"
 
 #define car(c)      	((c) && T(c) == PAIR ? (c)->pair.a : NULL)
 #define cdr(c)      	((c) && T(c) == PAIR ? (c)->pair.d : NULL)
@@ -563,6 +572,7 @@ struct OpCode {
 #define is_any(c)     	(TRUE)
 #define is_boolean(c) 	((c) && T(c) == BOOLEAN)
 #define is_char(c)    	((c) && T(c) == CHAR)
+#define is_letter(c)    ((c) && T(c) == CHAR && isalpha(char_value(c)))
 #define is_number(c)  	((c) && T(c) == NUMBER)
 #define is_real(c)    	((c) && T(c) == NUMBER && (number_type(c) == NUMBER_LONG || number_type(c) == NUMBER_DOUBLE || number_type(c) == NUMBER_FRACTION))
 #define is_integer(c) 	(is_number(c) && number_type(c) == NUMBER_LONG)

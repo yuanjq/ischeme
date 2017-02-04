@@ -1705,7 +1705,7 @@ static Cell *read_real(Cell *ctx, char **ppstart, char *pend, Exactness exact, R
             pstart = p + 1;
             find_slash = TRUE;
             find_num = FALSE;
-        } else if (c == '+' || c == '-' || c == 'i' || c == 'I') {
+        } else if (c == '+' || c == '-' || c == 'i' || c == 'I' || c == '@') {
             break;
         } else {
             switch (radix) {
@@ -1791,13 +1791,12 @@ static Cell *read_number(Cell *ctx, char *pstart, uint size, Exactness exact, Ra
     char *p = pstart;
     char *pend = p + size;
     gc_var2(real, imag);
+
     real = read_real(ctx, &p, pend, exact, radix);
     if (!real || p > pend) 
         return CELL_NIL;
- 
-    if (p == pend) {
+    if (p == pend)
         return real;
-    }
     gc_preserve2(ctx, real, imag);
     int c = *p;
     if (c == '+' || c == '-') {
@@ -1818,6 +1817,15 @@ static Cell *read_number(Cell *ctx, char *pstart, uint size, Exactness exact, Ra
             real = mk_long(ctx, 0);
         else
             real = mk_double(ctx, 0);
+    } else if (c == '@') {
+        ++p;
+        Cell *r = real;
+        Cell *thet = read_real(ctx, &p, pend, exact, radix);
+        if (!thet || p != pend) {
+            goto Error;
+        }
+        real = mk_double(ctx, number_double(exact_to_inexact(ctx, r)) * cos(number_double(exact_to_inexact(ctx, thet))));
+        imag = mk_double(ctx, number_double(exact_to_inexact(ctx, r)) * sin(number_double(exact_to_inexact(ctx, thet))));
     }
     if (exact == NO_EXACTNESS &&
         (number_type(real) == NUMBER_DOUBLE || number_type(imag) == NUMBER_DOUBLE)) 
@@ -1862,7 +1870,6 @@ static Cell *read_symbol(Cell *ctx, Cell *port, int _) {
 }
 
 static Cell *read_const(Cell *ctx, Cell *port, int c) {
-    // TODO: read #\{ #\[ #\( error
     Cell *ret = NULL;
     Cell *real = NULL, *imag = NULL;
     uint size = STR_BUF_SIZE;
@@ -1879,7 +1886,7 @@ static Cell *read_const(Cell *ctx, Cell *port, int c) {
     }
     pend = p + total_len;
     while (p < pend && *p == '#') {
-        if (p + 2 > pend)
+        if (p + 2 > pend && p[1] != '\\')
             goto Error;
         switch (p[1]) {
         case 'b': case 'B':
@@ -1921,10 +1928,21 @@ static Cell *read_const(Cell *ctx, Cell *port, int c) {
                 goto Error;
             return CELL_TRUE;
         case '\\':
-            if (exact != NO_EXACTNESS || radix != NO_RADIX || p + 2 == pend)
+            if (exact != NO_EXACTNESS || radix != NO_RADIX)
                 goto Error;
             p += 2;
-            if (pend - p > 1) {
+            if (p == pend) {
+                c = get_char(ctx, port);
+                if (!strchr(CSTR(DELIMITERS), c)) {
+                    goto Error;
+                }
+                int d = get_char(ctx, port);
+                if (!strchr(CSTR(DELIMITERS), d)) {
+                    goto Error;
+                }
+                unget_char(ctx, port, d);
+                return mk_char(ctx, c);
+            } else if (pend - p > 1) {
                 if (pend - p == 3 && !strncasecmp(p, "tab", 3)) {
                     return mk_char(ctx, '\t');
                 } else if (pend - p == 5 && !strncasecmp(p, "space", 5)) {

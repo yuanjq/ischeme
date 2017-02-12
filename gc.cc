@@ -114,6 +114,8 @@ static uint cell_mark(Cell *ctx, Cell *c) {
         if ((port_type(c) & PORT_FILE) &&
                 port_file_name(c)) {
             n += cell_mark(ctx, port_file_name(c));
+        } else if (port_type(c) & PORT_STRING) {
+            n += cell_mark(ctx, port_string_src(c));
         }
         break;
     case NUMBER:

@@ -27,11 +27,11 @@ iScheme TODO LIST
    string=? string<? string<=? string>? string>=? string-ci=? string-ci<? string-ci<=?
    string-ci>? string-ci>=? list->string list->vector symbol->string string make-string
    string-length string-ref string-set! substring string-append string-copy string-fill!
-   string->symbol string->list char->integer char-upcase char-downcase]
+   string->symbol string->list char->integer char-upcase char-downcase string->number
+   integer? rational? real? complex? exact? inexact? zero? negative? positive? abs]
    - State "DONE"           [2017/2/3 update]
 
-   [string->number integer? rational? real? complex? exact? inexact? zero? negative?
-   positive?  abs quotient remainder modulo gcd lcm expt sqrt numerator denominator
+   [quotient remainder modulo gcd lcm expt sqrt numerator denominator
    rationalize floor ceiling truncate round inexact->exact exact->inexact max min sin cos tan asin
    acos atan exp log make-rectangular make-polar real-part imag-part magnitude angle
    number->string integer->char]

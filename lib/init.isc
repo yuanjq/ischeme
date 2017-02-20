@@ -1,0 +1,15 @@
+(define (with-input-from-file file thunk)
+  (let ((old-in (current-input-port))
+        (tmp-in (open-input-file file)))
+    (dynamic-wind
+      (lambda () (set-current-input-port! tmp-in))
+      (lambda () (let ((res (thunk))) (close-input-port tmp-in) res))
+      (lambda () (set-current-input-port! old-in)))))
+
+(define (with-output-to-file file thunk)
+  (let ((old-out (current-output-port))
+        (tmp-out (open-output-file file)))
+    (dynamic-wind
+      (lambda () (set-current-output-port! tmp-out))
+      (lambda () (let ((res (thunk))) (close-output-port tmp-out) res))
+      (lambda () (set-current-output-port! old-out)))))

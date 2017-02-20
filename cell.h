@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
+#include <string.h>
 #include <string>
 #include <vector>
 #include <map>
@@ -11,6 +12,7 @@ using std::vector;
 using std::map;
 
 #define IDEBUG_MORE
+//#define MACRO_DEBUG
 
 #ifdef  IDEBUG_MORE
 #define IMessage(fmt, ...)      printf("*Message*: " fmt "\n", ##__VA_ARGS__)
@@ -40,7 +42,8 @@ typedef unsigned long           ulong;
 #define ISC_SEG_GROW_THRESHOLD  0.75
 #define ISC_SEG_REDU_THRESHOLD  0.25
 #define ISC_SEG_GROW_RATIO      1.5
-#define STR_BUF_SIZE            128
+#define STR_BUF_SIZE            256
+#define PORT_BUF_SIZE           512
 
 #define POINTER_TAG             0xA745C39BuL
 #define T_MASK                  0x00FF
@@ -74,7 +77,8 @@ typedef unsigned long           ulong;
 #define symbol_new(c)           cell_new(c, str, SYMBOL)
 #define number_new(c)           cell_new(c, num, NUMBER)
 #define pair_new(c)             cell_new(c, pair, PAIR)
-#define port_new(c)             cell_new(c, port, PORT)
+#define port_file_new(c)        cell_new(c, port.f, PORT)
+#define port_string_new(c)      cell_new(c, port.s, PORT)
 #define instruct_new(c)         cell_new(c, inst, INSTRUCT)
 #define continue_new(c)         cell_new(c, cont, CONTINUE)
 #define procedure_new(c)        cell_new(c, eproc, EPROC)
@@ -116,13 +120,17 @@ typedef unsigned long           ulong;
 #define number_cx_rl(n)         (cell_field(n,num,cx.rl))
 #define number_cx_im(n)         (cell_field(n,num,cx.im))
 
-#define port_type(p)            (cell_field(p,port,t))
+#define port_type(p)            (cell_field(p,port.s,t))
 #define port_file(p)            (cell_field(p,port,f.file))
 #define port_file_name(p)       (cell_field(p,port,f.name))
 #define port_file_pos(p)        (cell_field(p,port,f.pos))
+#define port_file_buf(p)        (cell_field(p,port,f.buf))
+#define port_file_bufidx(p)     (cell_field(p,port,f.bidx))
+#define port_file_buflen(p)     (cell_field(p,port,f.blen))
 #define port_string_start(p)    (cell_field(p,port,s.start))
 #define port_string_end(p)      (cell_field(p,port,s.end))
 #define port_string_pos(p)      (cell_field(p,port,s.pos))
+#define port_string_src(p)      (cell_field(p,port,s.src))
 
 #define instruct_op(c)          (cell_field(c,inst,op))
 #define instruct_args(c)        (cell_field(c,inst,args))
@@ -173,8 +181,14 @@ typedef unsigned long           ulong;
 #define ctx_r5rs_env(c)         (cell_field(c,ctx,r5rs_env))
 #define ctx_null_env(c)         (cell_field(c,ctx,null_env))
 #define ctx_symbols(c)          (cell_field(c,ctx,symbols))
+#define ctx_stdinport(c)        (cell_field(c,ctx,stdinport))
+#define ctx_stdoutport(c)       (cell_field(c,ctx,stdoutport))
+#define ctx_stderrport(c)       (cell_field(c,ctx,stderrport))
 #define ctx_inport(c)           (cell_field(c,ctx,inport))
 #define ctx_outport(c)          (cell_field(c,ctx,outport))
+#define ctx_transc_port(c)      (cell_field(c,ctx,trsport))
+#define ctx_transc_idx(c)       (cell_field(c,ctx,trsidx))
+#define ctx_transc_inportp(c)   (cell_field(c,ctx,trsinp))
 #define ctx_inports(c)          (cell_field(c,ctx,inports))
 #define ctx_inports_head(c)     (ctx_inports(c).front())
 #define ctx_inports_tail(c)     (ctx_inports(c).back())
@@ -304,7 +318,7 @@ enum ExpanderType {
 };
 
 struct Cell;
-typedef Cell*(*Reader)(Cell*, int);
+typedef Cell*(*Reader)(Cell*, Cell*, int);
 typedef Cell*(*EProc)(Cell*, Cell*);
 
 struct String {
@@ -329,17 +343,22 @@ struct Number {
 };
 
 struct Port {
-    uint t;
     union {
         struct {
+            uint t;
             FILE *file;
             Cell *name;
             int pos;
+            char buf[PORT_BUF_SIZE];
+            int bidx;
+            int blen;
         } f;
         struct {
+            uint t;
             char *start;
             char *end;
             char *pos;
+            Cell *src;
         } s;
     };
 };
@@ -402,8 +421,14 @@ struct Context {
     Cell *r5rs_env;
     Cell *null_env;
     Cell *symbols;
+    Cell *stdinport;
+    Cell *stdoutport;
+    Cell *stderrport;
     Cell *inport;
     Cell *outport;
+    Cell *trsport;
+    bool trsinp;
+    int trsidx;
     vector<Cell*> inports;
 
     Op op;
@@ -509,22 +534,23 @@ struct OpCode {
 
 #define T_ANY       	"\001"
 #define T_CHAR      	"\002"
-#define T_NUMBER    	"\003"
-#define T_REAL      	"\004"
-#define T_INTEGER   	"\005"
-#define T_NATURAL   	"\006"
-#define T_STRING    	"\007"
-#define T_SYMBOL    	"\010"
-#define T_PAIR      	"\011"
-#define T_LIST      	"\012"
-#define T_VECTOR    	"\013"
-#define T_PROC      	"\014"
-#define T_ENV     	    "\015"
-#define T_CONTI     	"\016"
-#define T_PORT      	"\017"
-#define T_INPORT    	"\020"
-#define T_OUTPORT   	"\021"
-#define T_PROMISE       "\022"
+#define T_LETTER        "\003"
+#define T_NUMBER    	"\004"
+#define T_REAL      	"\005"
+#define T_INTEGER   	"\006"
+#define T_NATURAL   	"\007"
+#define T_STRING    	"\010"
+#define T_SYMBOL    	"\011"
+#define T_PAIR      	"\012"
+#define T_LIST      	"\013"
+#define T_VECTOR    	"\014"
+#define T_PROC      	"\015"
+#define T_ENV     	    "\016"
+#define T_CONTI     	"\017"
+#define T_PORT      	"\020"
+#define T_INPORT    	"\021"
+#define T_OUTPORT   	"\022"
+#define T_PROMISE       "\023"
 
 #define car(c)      	((c) && T(c) == PAIR ? (c)->pair.a : NULL)
 #define cdr(c)      	((c) && T(c) == PAIR ? (c)->pair.d : NULL)
@@ -550,10 +576,15 @@ struct OpCode {
 #define is_any(c)     	(TRUE)
 #define is_boolean(c) 	((c) && T(c) == BOOLEAN)
 #define is_char(c)    	((c) && T(c) == CHAR)
+#define is_letter(c)    ((c) && T(c) == CHAR && isalpha(char_value(c)))
 #define is_number(c)  	((c) && T(c) == NUMBER)
 #define is_real(c)    	((c) && T(c) == NUMBER && (number_type(c) == NUMBER_LONG || number_type(c) == NUMBER_DOUBLE || number_type(c) == NUMBER_FRACTION))
 #define is_integer(c) 	(is_number(c) && number_type(c) == NUMBER_LONG)
 #define is_natural(c) 	(is_integer_f(c) && number_long(c) >= 0)
+#define is_complex(c)   (is_number(c) && number_type(c) == NUMBER_COMPLEX)
+#define is_exact(c)     (is_number(c) && (number_type(c) == NUMBER_LONG || number_type(c) == NUMBER_FRACTION || (number_type(c) == NUMBER_COMPLEX && number_type(number_cx_rl(c)) != NUMBER_DOUBLE)))
+#define is_inexact(c)   (!is_exact(c))
+#define is_zero(c)      (is_integer(c) && number_long(c) == 0)
 #define is_string(c)  	((c) && T(c) == STRING)
 #define is_pair(c)    	((c) && T(c) == PAIR)
 #define is_vector(c)  	((c) && T(c) == VECTOR)
@@ -586,7 +617,107 @@ struct OpCode {
 #define rplaca(c, _a)   (is_pair(c) ? c->pair.a = _a : NULL)
 #define rplacd(c, _d)   (is_pair(c) ? c->pair.d = _d : NULL)
 
+#define gc_var(a,b)                     Cell *a=NULL; Preserved b={NULL,NULL}
+#define gc_var1(a)                      gc_var(a, __preserved_var1)
+#define gc_var2(a,b)                    gc_var1(a); gc_var(b, __preserved_var2)
+#define gc_var3(a,b,c)                  gc_var2(a,b); gc_var(c, __preserved_var3)
+#define gc_var4(a,b,c,d)                gc_var3(a,b,c); gc_var(d, __preserved_var4)
+#define gc_var5(a,b,c,d,e)              gc_var4(a,b,c,d); gc_var(e, __preserved_var5)
+#define gc_var6(a,b,c,d,e,f)            gc_var5(a,b,c,d,e); gc_var(f, __preserved_var6)
+#define gc_var7(a,b,c,d,e,f,g)          gc_var6(a,b,c,d,e,f); gc_var(g, __preserved_var7)
+#define gc_var8(a,b,c,d,e,f,g,h)        gc_var7(a,b,c,d,e,f,g); gc_var(h, __preserved_var8)
+
+#define gc_preserve(ctx,a,b)            do { \
+                                            (b).var = &(a); \
+                                            (b).next = ctx_saves(ctx); \
+                                            ctx_saves(ctx) = &(b); \
+                                        } while (0)
+#define gc_preserve1(s,a)               gc_preserve(s,a,__preserved_var1)
+#define gc_preserve2(s,a,b)             gc_preserve1(s,a); gc_preserve(s,b,__preserved_var2)
+#define gc_preserve3(s,a,b,c)           gc_preserve2(s,a,b); gc_preserve(s,c,__preserved_var3)
+#define gc_preserve4(s,a,b,c,d)         gc_preserve3(s,a,b,c); gc_preserve(s,d,__preserved_var4)
+#define gc_preserve5(s,a,b,c,d,e)       gc_preserve4(s,a,b,c,d); gc_preserve(s,e,__preserved_var5)
+#define gc_preserve6(s,a,b,c,d,e,f)     gc_preserve5(s,a,b,c,d,e); gc_preserve(s,f,__preserved_var6)
+#define gc_preserve7(s,a,b,c,d,e,f,g)   gc_preserve6(s,a,b,c,d,e,f); gc_preserve(s,g,__preserved_var7)
+#define gc_preserve8(s,a,b,c,d,e,f,g,h) gc_preserve7(s,a,b,c,d,e,f,g); gc_preserve(s,h,__preserved_var8)
+#define gc_release(s)                   (ctx_saves(s) = __preserved_var1.next)
+
+#define CELL_TRUE                       &g_true
+#define CELL_FALSE                      &g_false
+#define CELL_NIL                        &g_nil
+#define CELL_EOF                        &g_eof
+#define CELL_UNDEF                      &g_undef
+#define CELL_ERR                        &g_error
+#define CELL_ELLIPSIS                   &g_ellipsis
+#define CELL_SPLICING                   &g_splicing
+
+extern Cell g_true;
+extern Cell g_false;
+extern Cell g_nil;
+extern Cell g_eof;
+extern Cell g_undef;
+extern Cell g_error;
+extern Cell g_ellipsis;
+extern Cell g_splicing;
+
 /************** function *************/
 void *cell_alloc(Cell *ctx, uint size);
 uint cell_gc(Cell *, uint*);
 Segment *cell_mk_segment(uint);
+
+bool is_list(Cell *c);
+bool is_contains(Cell *ls, Cell *c);
+bool equal(Cell *a, Cell *b);
+Cell *assq(Cell *key, Cell *list);
+Cell *find_env(Cell *env, Cell *k);
+uint length(Cell *list);
+void list_add(Cell *ctx, Cell *ls, Cell *c);
+void list_extend(Cell *ctx, Cell *ls, Cell *c);
+void list_set(Cell *ls, Cell *n, Cell *v);
+Cell *list_ref(Cell *ls, Cell *n);
+Cell *list_tail(Cell *ls, uint n);
+Cell *list_pop(Cell *ls);
+void alist_update(Cell *ctx, Cell *ls1, Cell *ls2);
+void alist_append(Cell *ctx, Cell *ls, Cell *pair);
+
+Cell *cons(Cell *ctx, Cell *a, Cell *d);
+Cell *mk_bool(bool b);
+Cell *mk_char(Cell *ctx, char chr);
+Cell *mk_string(Cell *ctx, const char *fmt, ...);
+Cell *mk_string(Cell *ctx, uint size, char fill);
+Cell *mk_string(Cell *ctx, uint size);
+Cell *mk_symbol(Cell *ctx, const char *s);
+Cell *mk_vector(Cell *ctx, uint len, Cell *fill);
+Cell *mk_env(Cell *ctx, bool immtb, Cell *outer);
+Cell *mk_iproc(Cell *ctx, int op);
+Cell *mk_macro(Cell *ctx, Cell *mchs, Cell *env);
+Cell *mk_promise(Cell *ctx, Cell *expr);
+Cell *mk_port(Cell *ctx, FILE *f, const char *name, int t);
+Cell *mk_port(Cell *ctx, char *start, char *end, int t);
+Cell *mk_syntax(Cell *ctx, int op);
+Cell *mk_continue(Cell *ctx, Cell *ins, Cell *winds);
+Cell *mk_multival(Cell *ctx, Cell *c);
+Cell *mk_closure(Cell *ctx, Cell *a, Cell *e);
+Cell *mk_proc(Cell *ctx, Cell *name, Cell *clos);
+Cell *mk_long(Cell *ctx, long l);
+Cell *mk_double(Cell *ctx, double d);
+Cell *mk_fraction(Cell *ctx, long nr, long dr);
+Cell *mk_complex(Cell *ctx, Cell *rl, Cell *im);
+Cell *mk_exception_f(Cell *ctx, ErrorType t, Cell *msg, Cell *trg, Cell *src);
+#define mk_exception(c,t,msg,trg,src)   ({ \
+                                            gc_var3(_msg,_trg,_src); \
+                                            gc_preserve3(c,_msg,_trg,_src); \
+                                            _msg=msg; _trg=trg; _src=src; \
+                                            Cell *excpt = mk_exception_f(ctx,t,_msg,_trg,_src); \
+                                            gc_release(ctx); \
+                                            excpt; \
+                                        })
+
+Cell *num_calcu(Cell *ctx, int op, Cell *a, Cell *b);
+Cell *num_etoi(Cell *ctx, Cell *num);
+Cell *num_itoe(Cell *ctx, Cell *num);
+bool num_equal(Cell *a, Cell *b);
+double num_real_compare(Cell *a, Cell *b);
+
+Cell *macro_analyze(Cell *ctx, Cell *lit, Cell *matches, Cell *syn_env);
+Cell *macro_transform(Cell *ctx, Cell *machers, Cell *syn_env, Cell *expr, Cell *expr_env);

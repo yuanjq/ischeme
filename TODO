@@ -16,22 +16,22 @@ iScheme TODO LIST
    vector? vector make-vector vector-length vector-ref vector-set! vector-fill!
    vector->list list? list list-tail list-ref length append  reverse memq memv
    member assq assv assoc number? cons car cdr set-car! set-cdr! odd? even?
-   < <= > >= = + - * / for-each force values call-with-values dynamic-wind]
-   - State "DONE"           [2017/01/18 update]
+   < <= > >= = + - * / for-each force values call-with-values dynamic-wind
+   scheme-report-environment null-environment interaction-environment transcript-on
+   transcript-off read write read-char write-char peek-char char-ready? eof-object?
+   open-input-file open-output-file close-input-port close-output-port input-port?
+   output-port? current-input-port current-output-port call-with-input-file
+   call-with-output-file with-input-from-file with-output-to-file char=? char<?
+   char<=? char>? char>=? char-ci=? char-ci<?  char-ci<=? char-ci>? char-ci>=?
+   char-alphabetic? char-numeric?  char-whitespace?  char-upper-case? char-lower-case?
+   string=? string<? string<=? string>? string>=? string-ci=? string-ci<? string-ci<=?
+   string-ci>? string-ci>=? list->string list->vector symbol->string string make-string
+   string-length string-ref string-set! substring string-append string-copy string-fill!
+   string->symbol string->list char->integer char-upcase char-downcase string->number
+   integer? rational? real? complex? exact? inexact? zero? negative? positive? abs]
+   - State "DONE"           [2017/2/3 update]
 
-   [scheme-report-environment
-   null-environment interaction-environment transcript-on transcript-off read write
-   read-char write-char peek-char char-ready? eof-object? open-input-file open-output-file
-   close-input-port close-output-port input-port? output-port? current-input-port
-   current-output-port call-with-input-file call-with-output-file with-input-from-file
-   with-output-to-file char=? char<? char<=? char>? char>=? char-ci=? char-ci<?
-   char-ci<=? char-ci>? char-ci>=? char-alphabetic? char-numeric?  char-whitespace?
-   char-upper-case? char-lower-case? string=? string<? string<=? string>? string>=?
-   string-ci=? string-ci<? string-ci<=? string-ci>? string-ci>=? list->string list->vector
-   symbol->string string make-string string-length string-ref string-set! substring
-   string-append string-copy string-fill! string->symbol string->list string->number char->integer
-   char-upcase char-downcase integer? rational? real? complex? exact? inexact? zero? negative?
-   positive?  abs quotient remainder modulo gcd lcm expt sqrt numerator denominator
+   [quotient remainder modulo gcd lcm expt sqrt numerator denominator
    rationalize floor ceiling truncate round inexact->exact exact->inexact max min sin cos tan asin
    acos atan exp log make-rectangular make-polar real-part imag-part magnitude angle
    number->string integer->char]

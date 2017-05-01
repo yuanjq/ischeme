@@ -145,7 +145,7 @@ Cell *mk_closure(Cell *ctx, Cell *a, Cell *e) {
     gc_preserve1(ctx, c);
     closure_args(c) = car(a);
     closure_code(c) = cdr(a);
-    closure_env(c) = mk_env(ctx, false, e);
+    closure_env(c) = e;//mk_env(ctx, false, e);
     gc_release(ctx);
     return c;
 }
@@ -1142,7 +1142,7 @@ static void print_cell_readable(Cell *ctx, Cell *p, Cell *c) {
     write_cell(ctx, p, c, 1, 0, 1);
 }
 
-static void print_cell(Cell *ctx, Cell *p, Cell *c) {
+void print_cell(Cell *ctx, Cell *p, Cell *c) {
     write_cell(ctx, p, c, 0, 0, 1);
 }
 
@@ -1685,7 +1685,7 @@ static Cell *read_list(Cell *ctx, Cell *port, int c) {
     return cdr(head);
 }
 
-static Cell *isc_repl(Cell *ctx) {
+Cell *isc_repl(Cell *ctx) {
     gc_var6(a, b, c, d, e, f);
     gc_preserve6(ctx, a, b, c, d, e, f);
     ctx_op(ctx) = OP_REPL_LOOP;
@@ -1759,6 +1759,9 @@ Loop:
         return ctx_ret(ctx);
     case OP_DEF:
         c = ctx_code(ctx);
+        if (is_closure_expr(car(c))) {
+            rplaca(c, closure_expr_expr(car(c)));
+        }
         if (is_pair(d = car(c))) {
             e = cdr(c);
             for (; is_pair(d); d = car(d)) {
@@ -3374,7 +3377,7 @@ static void init_readers() {
     g_readers[TOK_VECTOR]   = read_vector;
 }
 
-static Cell *isc_init(PortType pt, FILE *in, char *src) {
+Cell *isc_init(PortType pt, FILE *in, char *src) {
     Cell *port;
     gc_var1(ctx);
     ctx = ischeme_ctx_new();
@@ -3470,6 +3473,7 @@ static Cell *arg_type_check(Cell *ctx) {
             Cell *args = ctx_args(ctx);
             do {
                 Cell *arg = car(args);
+                if (is_closure_expr(arg)) arg = closure_expr_expr(arg);
                 if (!g_arg_inspector[arg_types[0]-1].func(arg)) break;
                 if (arg_types[1] != 0) ++arg_types;
                 args = cdr(args);
@@ -3495,69 +3499,8 @@ Err:
     return mk_exception(ctx, SyntaxError, mk_string(ctx, buf), NULL, NULL);
 }
 
-static void isc_finalize(Cell *ctx) {
+void isc_finalize(Cell *ctx) {
 
-}
-
-void isc_helper() {
-    printf("iScheme v0.1 by yuanjq\n");
-    printf("Options and arguments:\n");
-    printf("  -\t\t program read from stdin\n");
-    printf("  -s\t\t program read form sting\n");
-    printf("  file\t\t program read from file\n");
-    printf("  -h(--help)\t print this help message and exit\n");
-    printf("  -v(--version)\t iScheme's version\n");
-}
-
-int main(int argc, char *argv[]) {
-    PortType pt = PORT_FREE;
-    FILE *in = NULL;
-    char *str = NULL;
-    if (argc == 1) {
-        in = stdin;
-    } else {
-        if (!strcmp(argv[1], "-h")  || !strcmp(argv[1], "--help")) {
-            isc_helper();
-            return 0;
-        } else if (!strcmp(argv[1], "-v") || !strcmp(argv[1], "--version")) {
-            printf("iScheme v0.1\n");
-            return 0;
-        } else if (!strcmp(argv[1], "-")) {
-            in = stdin;
-        } else if (!strcmp(argv[1], "-s")) {
-            if (argc != 3) {
-                IError("invalid arguments");
-                return -1;
-            }
-            pt = PORT_INPUT_STRING;
-            str = argv[2];
-        } else if (!access(argv[1], F_OK | R_OK)) {
-            pt = PORT_INPUT_FILE;
-            in = fopen(argv[1], "r");
-            str = argv[1];
-            if (!in) {
-                IError("cant't open file '%s'", str);
-                return -1;
-            }
-        } else {
-            isc_helper();
-            return 0;
-        }
-    }
-
-    if (in == stdin) {
-        pt = PORT_STDIN;
-        printf("iScheme v0.1 by yuanjq\n");
-    }
-
-    Cell *ctx;
-    ctx = isc_init(pt, in, str);
-    if (!ctx) {
-        return -1;
-    }
-    isc_repl(ctx);
-    isc_finalize(ctx);
-    return 0;
 }
 
 /**************** ffi ****************/
@@ -3622,7 +3565,7 @@ Cell *ischeme_ctx_new() {
     }
     env_add(ctx, std_env, internal(ctx, "call/cc"),
             cdr(find_env(std_env, internal(ctx, g_opcodes[OP_CALLCC].name))));
-    c = ischeme_port_new(ctx, PORT_INPUT_FILE, "lib/init.isc");
+    c = ischeme_port_new(ctx, PORT_INPUT_FILE, ISC_LIB_DIR "/init.isc");
     ischeme_eval(ctx, c);
     ischeme_port_close(ctx, c);
     gc_release(ctx);

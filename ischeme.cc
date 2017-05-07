@@ -145,7 +145,7 @@ Cell *mk_closure(Cell *ctx, Cell *a, Cell *e) {
     gc_preserve1(ctx, c);
     closure_args(c) = car(a);
     closure_code(c) = cdr(a);
-    closure_env(c) = e;//mk_env(ctx, false, e);
+    closure_env(c) = e;
     gc_release(ctx);
     return c;
 }
@@ -751,16 +751,22 @@ void alist_update(Cell *ctx, Cell *ls1, Cell *ls2) {
         if (!is_pair(car(ls2)))
             continue;
         bool found = FALSE;
-        for (Cell *ls=ls1; is_pair(ls); ls=cdr(ls)) {
+        for (Cell *ls=ls1, *t1, *t2; is_pair(ls); ls=cdr(ls)) {
             if (!is_pair(car(ls)))
                 continue;
             if (equal(caar(ls), caar(ls2))) {
                 found = TRUE;
-                list_add(ctx, cdar(ls), cdar(ls2));
+                t1 = cdar(ls);
+                t2 = cdar(ls2);
+                if (is_pair(t1)) {
+                    list_add(ctx, t1, t2);
+                } else {
+                    rplacd(car(ls), cons(ctx, t1, v1 = cons(ctx, t2, CELL_NIL)));
+                }
             }
         }
         if (!found) {
-            list_add(ctx, ls1, v1 = cons(ctx, caar(ls2),  v2 = cons(ctx, cdar(ls2), CELL_NIL)));
+            list_add(ctx, ls1, v1 = cons(ctx, caar(ls2), cdar(ls2)));
         }
     }
     gc_release(ctx);
@@ -768,6 +774,8 @@ void alist_update(Cell *ctx, Cell *ls1, Cell *ls2) {
 
 void alist_append(Cell *ctx, Cell *ls, Cell *pair) {
     if (!is_pair(ls) || !is_pair(pair)) return;
+    gc_var1(v1);
+    gc_preserve1(ctx, v1);
     bool found = FALSE;
     Cell *k = car(pair), *v = cdr(pair);
     for (Cell *c=ls; is_pair(c); c=cdr(c)) {
@@ -775,16 +783,18 @@ void alist_append(Cell *ctx, Cell *ls, Cell *pair) {
             continue;
         if (equal(caar(c), k)) {
             found = TRUE;
-            list_add(ctx, cdar(c), v);
+            if (is_pair(cdar(c))) {
+                list_add(ctx, cdar(c), v);
+            } else {
+                rplacd(car(c), cons(ctx, cdar(c), v1 = cons(ctx, v, CELL_NIL)));
+            }
             break;
         }
     }
     if (!found) {
-        gc_var2(v1, v2);
-        gc_preserve2(ctx, v1, v2);
-        list_add(ctx, ls, v1 = cons(ctx, k, v2 = cons(ctx, v, CELL_NIL)));
-        gc_release(ctx);
+        list_add(ctx, ls, v1 = cons(ctx, k, v));
     }
+    gc_release(ctx);
 }
 
 Cell *find_env(Cell *env, Cell *k) {
@@ -1759,18 +1769,20 @@ Loop:
         return ctx_ret(ctx);
     case OP_DEF:
         c = ctx_code(ctx);
-        if (is_closure_expr(car(c))) {
-            rplaca(c, closure_expr_expr(car(c)));
+        d = car(c);
+        if (is_closure_expr(d)) {
+            d = closure_expr_expr(d);
+            rplaca(c, d);
         }
-        if (is_pair(d = car(c))) {
+        if (is_pair(d)) {
             e = cdr(c);
             for (; is_pair(d); d = car(d)) {
                 c = car(d);
                 e = cons(ctx, ctx_lambda(ctx), f = cons(ctx, cdr(d), e));
             }
             ctx_code(ctx) = e;
-        } else if (is_symbol(car(c))) {
-            c = car(c);
+        } else if (is_symbol(d)) {
+            c = d;
             ctx_code(ctx) = cadr(ctx_code(ctx));
         } else {
             gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "invalid define expression"), NULL, NULL));
@@ -1883,7 +1895,7 @@ Loop:
                         print_cell(ctx, ctx_stdoutport(ctx), ctx_code(ctx));
                         write_char(ctx, ctx_stdoutport(ctx), '\n');
                         #endif
-                        ctx_code(ctx) = mk_closure(ctx, d = cons(ctx, CELL_NIL, ctx_code(ctx)), macro_env(c));
+                        ctx_code(ctx) = mk_closure(ctx, d = cons(ctx, CELL_NIL, e = cons(ctx, ctx_code(ctx), CELL_NIL)), macro_env(c));
                         ctx_args(ctx) = CELL_NIL;
                         gotoOp(ctx, OP_APPLY);
                     }

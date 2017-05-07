@@ -573,8 +573,14 @@ inline Cell *cdr(Cell *c)   { return ((c) && T(c) == PAIR ? (c)->pair.d : NULL);
 #define is_false(c) 	((c) == CELL_FALSE)
 #define is_eof(c)   	((c) == CELL_EOF)
 #define is_undef(c) 	((c) == CELL_UNDEF)
+#define is_error(c)     ((c) == CELL_ERR)
 #define is_ellipsis(c)	((c) == CELL_ELLIPSIS)
 #define is_any(c)     	(TRUE)
+
+#define is_quote(c,q)       ((q) == ctx_quote(c))
+#define is_qquote(c,q)      ((q) == ctx_quasiquote(c))
+#define is_unquote(c,q)     ((q) == ctx_unquote(ctx))
+#define is_unquotes(c,q)    ((q) == ctx_unquote_splicing(c))
 
 inline bool is_boolean(Cell *c) { return ((c) && T(c) == BOOLEAN); }
 inline bool is_char(Cell *c) { return ((c) && T(c) == CHAR); }

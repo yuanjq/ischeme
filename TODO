@@ -62,3 +62,7 @@ iScheme TODO LIST
 * GC
 ** mark/sweep
    - State "DONE"       [2017/01/10]
+
+* SRFI
+** SRFI 9: define-record-type
+   - State "DONE"       [2017/08/21]

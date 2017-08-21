@@ -166,7 +166,11 @@ Cell *syntax_pattern_match(Cell *ctx, Cell *mt, Cell *expr, Cell *expr_env, Cell
             }
             rt = cdr(rt);
         } else {
-            if (!is_pair(expr)) {
+            if (is_eof(expr)) {
+                alist_append(ctx, md, tmp = cons(ctx, matcher_name(mt), CELL_EOF));
+                gc_release(ctx);
+                return CELL_NIL;
+            } else if (!is_pair(expr)) {
                 gc_release(ctx);
                 return CELL_ERR;
             }
@@ -174,7 +178,7 @@ Cell *syntax_pattern_match(Cell *ctx, Cell *mt, Cell *expr, Cell *expr_env, Cell
             expr = cdr(expr);
             if (is_eof(rt)) {
                 gc_release(ctx);
-                return expr;
+                return CELL_NIL;
             }
         }
         alist_append(ctx, md, tmp = cons(ctx, matcher_name(mt), rt));
@@ -197,7 +201,7 @@ Cell *syntax_pattern_match(Cell *ctx, Cell *mt, Cell *expr, Cell *expr_env, Cell
         if (is_nil(expr)) {
             expr = CELL_EOF;
         }
-        tmp = syntax_pattern_match(ctx, matcher_value(mt), tmp = cons(ctx, expr, CELL_NIL), expr_env, md);
+        tmp = syntax_pattern_match(ctx, matcher_value(mt), expr, expr_env, md);
         gc_release(ctx);
         return tmp;
     }
@@ -288,7 +292,7 @@ static Cell *_sequence_expand(Cell *ctx, Cell *expd, Cell *md, Cell *env, Cell *
         if (is_pair(var)) {
             if (len == 0) {
                 len = length(var);
-            } else if (length(var) < len) {
+            } else if (length(var) > len) {
                 len = length(var);
             }
         } else if (len == 0) {

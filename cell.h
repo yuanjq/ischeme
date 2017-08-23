@@ -588,6 +588,8 @@ inline bool is_letter(Cell *c) { return ((c) && T(c) == CHAR && isalpha(char_val
 inline bool is_number(Cell *c) { return ((c) && T(c) == NUMBER); }
 inline bool is_real(Cell *c) { return ((c) && T(c) == NUMBER && (number_type(c) == NUMBER_LONG || number_type(c) == NUMBER_DOUBLE || number_type(c) == NUMBER_FRACTION)); }
 inline bool is_integer(Cell *c) { return (is_number(c) && number_type(c) == NUMBER_LONG); }
+inline bool is_double(Cell *c) { return is_number(c) && number_type(c) == NUMBER_DOUBLE; }
+inline bool is_fraction(Cell *c) { return is_number(c) && number_type(c) == NUMBER_FRACTION; }
 inline bool is_natural(Cell *c) { return (is_integer(c) && number_long(c) >= 0); }
 inline bool is_complex(Cell *c) { return (is_number(c) && number_type(c) == NUMBER_COMPLEX); }
 inline bool is_exact(Cell *c) { return (is_number(c) && (number_type(c) == NUMBER_LONG || number_type(c) == NUMBER_FRACTION || (number_type(c) == NUMBER_COMPLEX && number_type(number_cx_rl(c)) != NUMBER_DOUBLE))); }

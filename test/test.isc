@@ -275,3 +275,14 @@
 (test 2 (let ((tmp (make-pare 1 2 3 4))) (set-x tmp 2) (get-x tmp)))
 (test 4 (get-y (make-pare 1 2 3 4)))
 (test 1 (get-w (make-pare 1 2 3 4)))
+
+;; numeric
+(test 1 (modulo 13 4))
+(test 1 (remainder 13 4))
+(test 3 (modulo -13 4))
+(test -1 (remainder -13 4))
+(test -3 (modulo 13 -4))
+(test 1 (remainder 13 -4))
+(test -1 (modulo -13 -4))
+(test -1 (remainder -13 -4))
+(test -1.0 (remainder -13 -4.0))

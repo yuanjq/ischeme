@@ -3367,6 +3367,46 @@ Loop:
             break;
         }
         popOp(ctx, d);
+    case OP_QUOTIENT:
+    case OP_REMAINDER:
+    case OP_MODULO:
+    {
+        a = car(ctx_args(ctx));
+        b = cadr(ctx_args(ctx));
+        if ((is_double(a) && (number_double(a) != (long)(number_double(a)))) ||
+                is_fraction(a)) {
+            gotoErr(ctx, mk_exception(ctx, TypeError, mk_string(ctx, "type of arguments error"), NULL, NULL));
+
+        }
+        if (is_double(b) && (number_double(b) != (long)(number_double(b))) ||
+                is_fraction(b)) {
+            gotoErr(ctx, mk_exception(ctx, TypeError, mk_string(ctx, "type of arguments error"), NULL, NULL));
+
+        } else if ((is_integer(b) && (number_long(b) == 0)) ||
+                (is_double(b) && (number_double(b) == 0))) {
+            gotoErr(ctx, mk_exception(ctx, ValueError, mk_string(ctx, "number devide by zero"), NULL, NULL));
+        }
+        long na = (long)(is_integer(a) ? number_long(a) : number_double(a));
+        long nb = (long)(is_integer(b) ? number_long(b) : number_double(b));
+        if (is_double(a) || is_double(b)) {
+            switch (op) {
+            case OP_QUOTIENT:
+                popOp(ctx, mk_double(ctx, (double)(na / nb)));
+            case OP_REMAINDER:
+                popOp(ctx, mk_double(ctx, (double)(na % nb)));
+            case OP_MODULO:
+                popOp(ctx, mk_double(ctx, (double)na - floor((double)na / nb) * nb));
+            }
+        }
+        switch (op) {
+        case OP_QUOTIENT:
+            popOp(ctx, mk_long(ctx, na / nb));
+        case OP_REMAINDER:
+            popOp(ctx, mk_long(ctx, na % nb));
+        case OP_MODULO:
+            popOp(ctx, mk_long(ctx, (long)(na - floor((double)na / nb) * nb)));
+        }
+    }
     default:
         break;
     }

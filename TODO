@@ -28,13 +28,13 @@ iScheme TODO LIST
    string-ci>? string-ci>=? list->string list->vector symbol->string string make-string
    string-length string-ref string-set! substring string-append string-copy string-fill!
    string->symbol string->list char->integer char-upcase char-downcase string->number
-   integer? rational? real? complex? exact? inexact? zero? negative? positive? abs]
-   - State "DONE"           [2017/2/3 update]
+   integer? rational? real? complex? exact? inexact? zero? negative? positive? abs
+   quotient remainder modulo gcd lcm inexact->exact max min exact->inexact real-part
+   imag-part]
+   - State "DONE"           [2017/8/26 update]
 
-   [quotient remainder modulo gcd lcm expt sqrt numerator denominator
-   rationalize floor ceiling truncate round inexact->exact exact->inexact max min sin cos tan asin
-   acos atan exp log make-rectangular make-polar real-part imag-part magnitude angle
-   number->string integer->char]
+   [number->string integer->char expt sqrt numerator denominator rationalize floor ceiling 
+   truncate round  sin cos tan asin acos atan exp log make-rectangular make-polar magnitude angle]
    - State "TODO"
 ** DONE call/cc
    - State "DONE"       [2016/1/18]
@@ -62,3 +62,7 @@ iScheme TODO LIST
 * GC
 ** mark/sweep
    - State "DONE"       [2017/01/10]
+
+* SRFI
+** SRFI 9: define-record-type
+   - State "DONE"       [2017/08/21]

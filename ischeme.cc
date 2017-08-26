@@ -145,7 +145,7 @@ Cell *mk_closure(Cell *ctx, Cell *a, Cell *e) {
     gc_preserve1(ctx, c);
     closure_args(c) = car(a);
     closure_code(c) = cdr(a);
-    closure_env(c) = mk_env(ctx, false, e);
+    closure_env(c) = e;
     gc_release(ctx);
     return c;
 }
@@ -751,16 +751,22 @@ void alist_update(Cell *ctx, Cell *ls1, Cell *ls2) {
         if (!is_pair(car(ls2)))
             continue;
         bool found = FALSE;
-        for (Cell *ls=ls1; is_pair(ls); ls=cdr(ls)) {
+        for (Cell *ls=ls1, *t1, *t2; is_pair(ls); ls=cdr(ls)) {
             if (!is_pair(car(ls)))
                 continue;
             if (equal(caar(ls), caar(ls2))) {
                 found = TRUE;
-                list_add(ctx, cdar(ls), cdar(ls2));
+                t1 = cdar(ls);
+                t2 = cdar(ls2);
+                if (is_pair(t1)) {
+                    list_add(ctx, t1, t2);
+                } else {
+                    rplacd(car(ls), cons(ctx, t1, v1 = cons(ctx, t2, CELL_NIL)));
+                }
             }
         }
         if (!found) {
-            list_add(ctx, ls1, v1 = cons(ctx, caar(ls2),  v2 = cons(ctx, cdar(ls2), CELL_NIL)));
+            list_add(ctx, ls1, v1 = cons(ctx, caar(ls2), cdar(ls2)));
         }
     }
     gc_release(ctx);
@@ -768,6 +774,8 @@ void alist_update(Cell *ctx, Cell *ls1, Cell *ls2) {
 
 void alist_append(Cell *ctx, Cell *ls, Cell *pair) {
     if (!is_pair(ls) || !is_pair(pair)) return;
+    gc_var1(v1);
+    gc_preserve1(ctx, v1);
     bool found = FALSE;
     Cell *k = car(pair), *v = cdr(pair);
     for (Cell *c=ls; is_pair(c); c=cdr(c)) {
@@ -775,16 +783,18 @@ void alist_append(Cell *ctx, Cell *ls, Cell *pair) {
             continue;
         if (equal(caar(c), k)) {
             found = TRUE;
-            list_add(ctx, cdar(c), v);
+            if (is_pair(cdar(c))) {
+                list_add(ctx, cdar(c), v);
+            } else {
+                rplacd(car(c), cons(ctx, cdar(c), v1 = cons(ctx, v, CELL_NIL)));
+            }
             break;
         }
     }
     if (!found) {
-        gc_var2(v1, v2);
-        gc_preserve2(ctx, v1, v2);
-        list_add(ctx, ls, v1 = cons(ctx, k, v2 = cons(ctx, v, CELL_NIL)));
-        gc_release(ctx);
+        list_add(ctx, ls, v1 = cons(ctx, k, v));
     }
+    gc_release(ctx);
 }
 
 Cell *find_env(Cell *env, Cell *k) {
@@ -1142,7 +1152,7 @@ static void print_cell_readable(Cell *ctx, Cell *p, Cell *c) {
     write_cell(ctx, p, c, 1, 0, 1);
 }
 
-static void print_cell(Cell *ctx, Cell *p, Cell *c) {
+void print_cell(Cell *ctx, Cell *p, Cell *c) {
     write_cell(ctx, p, c, 0, 0, 1);
 }
 
@@ -1685,7 +1695,7 @@ static Cell *read_list(Cell *ctx, Cell *port, int c) {
     return cdr(head);
 }
 
-static Cell *isc_repl(Cell *ctx) {
+Cell *isc_repl(Cell *ctx) {
     gc_var6(a, b, c, d, e, f);
     gc_preserve6(ctx, a, b, c, d, e, f);
     ctx_op(ctx) = OP_REPL_LOOP;
@@ -1759,15 +1769,20 @@ Loop:
         return ctx_ret(ctx);
     case OP_DEF:
         c = ctx_code(ctx);
-        if (is_pair(d = car(c))) {
+        d = car(c);
+        if (is_closure_expr(d)) {
+            d = closure_expr_expr(d);
+            rplaca(c, d);
+        }
+        if (is_pair(d)) {
             e = cdr(c);
             for (; is_pair(d); d = car(d)) {
                 c = car(d);
                 e = cons(ctx, ctx_lambda(ctx), f = cons(ctx, cdr(d), e));
             }
             ctx_code(ctx) = e;
-        } else if (is_symbol(car(c))) {
-            c = car(c);
+        } else if (is_symbol(d)) {
+            c = d;
             ctx_code(ctx) = cadr(ctx_code(ctx));
         } else {
             gotoErr(ctx, mk_exception(ctx, SyntaxError, mk_string(ctx, "invalid define expression"), NULL, NULL));
@@ -1880,7 +1895,7 @@ Loop:
                         print_cell(ctx, ctx_stdoutport(ctx), ctx_code(ctx));
                         write_char(ctx, ctx_stdoutport(ctx), '\n');
                         #endif
-                        ctx_code(ctx) = mk_closure(ctx, d = cons(ctx, CELL_NIL, ctx_code(ctx)), macro_env(c));
+                        ctx_code(ctx) = mk_closure(ctx, d = cons(ctx, CELL_NIL, e = cons(ctx, ctx_code(ctx), CELL_NIL)), macro_env(c));
                         ctx_args(ctx) = CELL_NIL;
                         gotoOp(ctx, OP_APPLY);
                     }
@@ -2041,12 +2056,16 @@ Loop:
     case OP_DYNAMIC_WIND3:
         popOp(ctx, ctx_args(ctx));
     case OP_SCHEME_REPORT_ENV:
-        if (number_long(car(ctx_args(ctx))) != 5) {
+        c = car(ctx_args(ctx));
+        if ((is_exact_integer(c) && number_long(c) != 5) ||
+                (is_inexact_integer(c) && number_double(c) != 5)) {
             gotoErr(ctx, mk_exception(ctx, ValueError, mk_string(ctx, "scheme-report-environment: unsupported revision"), NULL, NULL));
         }
         popOp(ctx, ctx_r5rs_env(ctx));
     case OP_NULL_ENV:
-        if (number_long(car(ctx_args(ctx))) != 5) {
+        c = car(ctx_args(ctx));
+        if ((is_exact_integer(c) && number_long(c) != 5) ||
+                (is_inexact_integer(c) && number_double(c) != 5)) {
             gotoErr(ctx, mk_exception(ctx, ValueError, mk_string(ctx, "null-environment: unsupported revision"), NULL, NULL));
         }
         popOp(ctx, ctx_null_env(ctx));
@@ -3285,10 +3304,16 @@ Loop:
         popOp(ctx, d);
     case OP_ODD_P:
         c = car(ctx_args(ctx));
-        popOp(ctx, number_long(c) % 2 ? CELL_TRUE : CELL_FALSE);
+        if (is_exact_integer(c)) {
+            popOp(ctx, number_long(c) % 2 ? CELL_TRUE : CELL_FALSE);
+        }
+        popOp(ctx, (long)number_double(c) % 2 ? CELL_TRUE : CELL_FALSE);
     case OP_EVEN_P:
         c = car(ctx_args(ctx));
-        popOp(ctx, number_long(c) % 2 ? CELL_FALSE : CELL_TRUE);
+        if (is_exact_integer(c)) {
+            popOp(ctx, number_long(c) % 2 ? CELL_FALSE : CELL_TRUE);
+        }
+        popOp(ctx, (long)number_double(c) % 2 ? CELL_FALSE : CELL_TRUE);
     case OP_LP:
     case OP_GP:
     case OP_LEP:
@@ -3352,6 +3377,159 @@ Loop:
             break;
         }
         popOp(ctx, d);
+    case OP_QUOTIENT:
+    case OP_REMAINDER:
+    case OP_MODULO:
+    {
+        a = car(ctx_args(ctx));
+        b = cadr(ctx_args(ctx));
+        if ((is_double(a) && (number_double(a) != (long)(number_double(a)))) ||
+                is_fraction(a)) {
+            gotoErr(ctx, mk_exception(ctx, TypeError, mk_string(ctx, "type of arguments error"), NULL, NULL));
+
+        }
+        if (is_double(b) && (number_double(b) != (long)(number_double(b))) ||
+                is_fraction(b)) {
+            gotoErr(ctx, mk_exception(ctx, TypeError, mk_string(ctx, "type of arguments error"), NULL, NULL));
+
+        } else if (is_zero(b)) {
+            gotoErr(ctx, mk_exception(ctx, ValueError, mk_string(ctx, "number devide by zero"), NULL, NULL));
+        }
+        long na = (long)(is_exact_integer(a) ? number_long(a) : number_double(a));
+        long nb = (long)(is_exact_integer(b) ? number_long(b) : number_double(b));
+        if (is_double(a) || is_double(b)) {
+            switch (op) {
+            case OP_QUOTIENT:
+                popOp(ctx, mk_double(ctx, (double)(na / nb)));
+            case OP_REMAINDER:
+                popOp(ctx, mk_double(ctx, (double)(na % nb)));
+            case OP_MODULO:
+                popOp(ctx, mk_double(ctx, (double)na - floor((double)na / nb) * nb));
+            }
+        }
+        switch (op) {
+        case OP_QUOTIENT:
+            popOp(ctx, mk_long(ctx, na / nb));
+        case OP_REMAINDER:
+            popOp(ctx, mk_long(ctx, na % nb));
+        case OP_MODULO:
+            popOp(ctx, mk_long(ctx, (long)(na - floor((double)na / nb) * nb)));
+        }
+    }
+    case OP_GCD:
+    {
+        a = ctx_args(ctx);
+        if (length(a) == 0) {
+            popOp(ctx, mk_long(ctx, 0));
+        } else if(length(a) == 1) {
+            popOp(ctx, car(a));
+        }
+        b = car(a);
+        c = cadr(a);
+        d = cddr(a);
+        long nb = is_exact_integer(b) ? number_long(b) : (long)number_double(b);
+        long nc = is_exact_integer(c) ? number_long(c) : (long)number_double(c);
+        long gcd = num_gcd(nb, nc);
+        bool exact = is_exact_integer(b) && is_exact_integer(c);
+        for (long ne=0; is_pair(d); d=cdr(d)) {
+            e = car(d);
+            if (is_exact_integer(e)) {
+                ne = number_long(e);
+            } else {
+                ne = number_double(e);
+                exact = false;
+            }
+            gcd = num_gcd(gcd, ne);
+        }
+        if (exact) {
+            popOp(ctx, mk_long(ctx, gcd));
+        }
+        popOp(ctx, mk_double(ctx, gcd));
+    }
+    case OP_LCM:
+    {
+        a = ctx_args(ctx);
+        if (length(a) == 0) {
+            popOp(ctx, mk_long(ctx, 1));
+        } else if(length(a) == 1) {
+            popOp(ctx, car(a));
+        }
+        b = car(a);
+        c = cadr(a);
+        d = cddr(a);
+        long nb = is_exact_integer(b) ? number_long(b) : (long)number_double(b);
+        long nc = is_exact_integer(c) ? number_long(c) : (long)number_double(c);
+        nb = nb < 0 ? - nb : nb;
+        nc = nc < 0 ? - nc : nc;
+        long gcd = num_gcd(nb, nc);
+        bool exact = is_exact_integer(b) && is_exact_integer(c);
+        long long product = nb * nc;
+        long lcm = product / gcd;;
+        long ne; 
+        for (Cell *ls=d; is_pair(ls); ls=cdr(ls)) {
+            e = car(ls);
+            if (is_exact_integer(e)) {
+                ne = number_long(e);
+            } else {
+                ne = number_double(e);
+                exact = false;
+            }
+            ne = ne < 0 ? - ne : ne;
+            product = product * ne;
+            gcd = num_gcd(gcd, ne);
+        }
+        if (is_pair(d)) {
+            lcm = product / (long long)powl(gcd, length(a) - 1);
+        }
+        if (exact) {
+            popOp(ctx, mk_long(ctx, lcm));
+        }
+        popOp(ctx, mk_double(ctx, lcm));
+    }
+    case OP_INEXACT_TO_EXACT:
+        popOp(ctx, num_itoe(ctx, car(ctx_args(ctx))));
+    case OP_EXACT_TO_INEXACT:
+        popOp(ctx, num_etoi(ctx, car(ctx_args(ctx))));
+    case OP_MAX:
+        a = ctx_args(ctx);
+        if (is_pair(cdr(a))) {
+            b = car(a);
+            for (Cell *ls=cdr(a); is_pair(ls); ls=cdr(ls)) {
+                if (num_real_compare(car(ls), b) > 0) {
+                    b = car(ls);
+                }
+            }
+            popOp(ctx, b);
+        }
+        popOp(ctx, car(a));
+    case OP_MIN:
+        a = ctx_args(ctx);
+        if (is_pair(cdr(a))) {
+            b = car(a);
+            for (Cell *ls=cdr(a); is_pair(ls); ls=cdr(ls)) {
+                if (num_real_compare(car(ls), b) < 0) {
+                    b = car(ls);
+                }
+            }
+            popOp(ctx, b);
+        }
+        popOp(ctx, car(a));
+    case OP_REAL_PART:
+        a = car(ctx_args(ctx));
+        if (is_complex(a)) {
+            popOp(ctx, number_cx_rl(a));
+        }
+        popOp(ctx, a);
+    case OP_IMAG_PART:
+        a = car(ctx_args(ctx));
+        if (is_complex(a)) {
+            popOp(ctx, number_cx_im(a));
+        }
+        popOp(ctx, mk_long(ctx, 0));
+    case OP_NUMBER_TO_STRING:
+        break;
+    case OP_INTEGER_TO_CHAR:
+        break;
     default:
         break;
     }
@@ -3374,7 +3552,7 @@ static void init_readers() {
     g_readers[TOK_VECTOR]   = read_vector;
 }
 
-static Cell *isc_init(PortType pt, FILE *in, char *src) {
+Cell *isc_init(PortType pt, FILE *in, char *src) {
     Cell *port;
     gc_var1(ctx);
     ctx = ischeme_ctx_new();
@@ -3470,6 +3648,7 @@ static Cell *arg_type_check(Cell *ctx) {
             Cell *args = ctx_args(ctx);
             do {
                 Cell *arg = car(args);
+                if (is_closure_expr(arg)) arg = closure_expr_expr(arg);
                 if (!g_arg_inspector[arg_types[0]-1].func(arg)) break;
                 if (arg_types[1] != 0) ++arg_types;
                 args = cdr(args);
@@ -3495,69 +3674,8 @@ Err:
     return mk_exception(ctx, SyntaxError, mk_string(ctx, buf), NULL, NULL);
 }
 
-static void isc_finalize(Cell *ctx) {
+void isc_finalize(Cell *ctx) {
 
-}
-
-void isc_helper() {
-    printf("iScheme v0.1 by yuanjq\n");
-    printf("Options and arguments:\n");
-    printf("  -\t\t program read from stdin\n");
-    printf("  -s\t\t program read form sting\n");
-    printf("  file\t\t program read from file\n");
-    printf("  -h(--help)\t print this help message and exit\n");
-    printf("  -v(--version)\t iScheme's version\n");
-}
-
-int main(int argc, char *argv[]) {
-    PortType pt = PORT_FREE;
-    FILE *in = NULL;
-    char *str = NULL;
-    if (argc == 1) {
-        in = stdin;
-    } else {
-        if (!strcmp(argv[1], "-h")  || !strcmp(argv[1], "--help")) {
-            isc_helper();
-            return 0;
-        } else if (!strcmp(argv[1], "-v") || !strcmp(argv[1], "--version")) {
-            printf("iScheme v0.1\n");
-            return 0;
-        } else if (!strcmp(argv[1], "-")) {
-            in = stdin;
-        } else if (!strcmp(argv[1], "-s")) {
-            if (argc != 3) {
-                IError("invalid arguments");
-                return -1;
-            }
-            pt = PORT_INPUT_STRING;
-            str = argv[2];
-        } else if (!access(argv[1], F_OK | R_OK)) {
-            pt = PORT_INPUT_FILE;
-            in = fopen(argv[1], "r");
-            str = argv[1];
-            if (!in) {
-                IError("cant't open file '%s'", str);
-                return -1;
-            }
-        } else {
-            isc_helper();
-            return 0;
-        }
-    }
-
-    if (in == stdin) {
-        pt = PORT_STDIN;
-        printf("iScheme v0.1 by yuanjq\n");
-    }
-
-    Cell *ctx;
-    ctx = isc_init(pt, in, str);
-    if (!ctx) {
-        return -1;
-    }
-    isc_repl(ctx);
-    isc_finalize(ctx);
-    return 0;
 }
 
 /**************** ffi ****************/
@@ -3622,7 +3740,7 @@ Cell *ischeme_ctx_new() {
     }
     env_add(ctx, std_env, internal(ctx, "call/cc"),
             cdr(find_env(std_env, internal(ctx, g_opcodes[OP_CALLCC].name))));
-    c = ischeme_port_new(ctx, PORT_INPUT_FILE, "lib/init.isc");
+    c = ischeme_port_new(ctx, PORT_INPUT_FILE, ISC_LIB_DIR "/init.isc");
     ischeme_eval(ctx, c);
     ischeme_port_close(ctx, c);
     gc_release(ctx);

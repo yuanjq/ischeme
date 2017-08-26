@@ -7,7 +7,7 @@
         (if (equal? expect expr)
         (display "pass!\n")
         (display "fail!\n"))))))
-    
+
 (define cadr (lambda (a) (car (cdr a))))
 
 ;; macro test
@@ -22,6 +22,10 @@
 (test '('() 2 '() 4) (aaa (('() 2) ('() 4))))
 (test '(() 2 () 4) (aaa ((() 2) (() 4))))
 (test '(1 2 3 4) (aaa ((1 2) (3 4))))
+
+(define-syntax aaa (syntax-rules ()
+    ((_ a b ...) (begin (let ((t a)) (set! t (string-append t b)) ...)))))
+(test "abcdefgh" (aaa "ab" "cd" "ef" "gh"))
 
 (let ((lit1 "ok"))
     (define-syntax aaa (syntax-rules (lit1) ((_ a lit1) (display lit1))))
@@ -256,3 +260,39 @@
 (test 20 (let ((f (eval '(lambda (f x) (f x x))
                         (null-environment 5))))
             (f + 10)))
+
+;; define-record-type
+(define-record-type pare
+    (make-pare w z x y)
+    pare?
+    (w get-w)
+    (x get-x set-x)
+    (y get-y)
+    (z get-z set-z))
+(test #t (pare? (make-pare 1 2 3 4)))
+(test #f (pare? (make-vector 4)))
+(test 3 (get-x (make-pare 1 2 3 4)))
+(test 2 (let ((tmp (make-pare 1 2 3 4))) (set-x tmp 2) (get-x tmp)))
+(test 4 (get-y (make-pare 1 2 3 4)))
+(test 1 (get-w (make-pare 1 2 3 4)))
+
+;; numeric
+(test 1 (modulo 13 4))
+(test 1 (remainder 13 4))
+(test 3 (modulo -13 4))
+(test -1 (remainder -13 4))
+(test -3 (modulo 13 -4))
+(test 1 (remainder 13 -4))
+(test -1 (modulo -13 -4))
+(test -1 (remainder -13 -4))
+(test -1.0 (remainder -13 -4.0))
+(test 4 (gcd 32 -36))
+(test 4 (lcm 32 -36 16))
+(test 0 (gcd))
+(test 288 (lcm 32 -36))
+(test 1152 (lcm 32 -36 16))
+(test 288.0 (lcm 32.0 -36))
+(test 1 (lcm))
+
+(test 15/2 (max 3 7 4.2 6.5 15/2))
+(test 2 (min 3.9 4 2 10.12))

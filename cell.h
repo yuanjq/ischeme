@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include "ischeme.h"
 
 using std::vector;
 using std::map;
@@ -552,8 +553,8 @@ struct OpCode {
 #define T_OUTPORT   	"\022"
 #define T_PROMISE       "\023"
 
-#define car(c)      	((c) && T(c) == PAIR ? (c)->pair.a : NULL)
-#define cdr(c)      	((c) && T(c) == PAIR ? (c)->pair.d : NULL)
+inline Cell *car(Cell *c)   { return ((c) && T(c) == PAIR ? (c)->pair.a : NULL); }
+inline Cell *cdr(Cell *c)   { return ((c) && T(c) == PAIR ? (c)->pair.d : NULL); }
 #define caar(c)     	car(car(c))
 #define cadr(c)     	car(cdr(c))
 #define cdar(c)     	cdr(car(c))
@@ -572,50 +573,61 @@ struct OpCode {
 #define is_false(c) 	((c) == CELL_FALSE)
 #define is_eof(c)   	((c) == CELL_EOF)
 #define is_undef(c) 	((c) == CELL_UNDEF)
+#define is_error(c)     ((c) == CELL_ERR)
 #define is_ellipsis(c)	((c) == CELL_ELLIPSIS)
 #define is_any(c)     	(TRUE)
-#define is_boolean(c) 	((c) && T(c) == BOOLEAN)
-#define is_char(c)    	((c) && T(c) == CHAR)
-#define is_letter(c)    ((c) && T(c) == CHAR && isalpha(char_value(c)))
-#define is_number(c)  	((c) && T(c) == NUMBER)
-#define is_real(c)    	((c) && T(c) == NUMBER && (number_type(c) == NUMBER_LONG || number_type(c) == NUMBER_DOUBLE || number_type(c) == NUMBER_FRACTION))
-#define is_integer(c) 	(is_number(c) && number_type(c) == NUMBER_LONG)
-#define is_natural(c) 	(is_integer_f(c) && number_long(c) >= 0)
-#define is_complex(c)   (is_number(c) && number_type(c) == NUMBER_COMPLEX)
-#define is_exact(c)     (is_number(c) && (number_type(c) == NUMBER_LONG || number_type(c) == NUMBER_FRACTION || (number_type(c) == NUMBER_COMPLEX && number_type(number_cx_rl(c)) != NUMBER_DOUBLE)))
+
+#define is_quote(c,q)       ((q) == ctx_quote(c))
+#define is_qquote(c,q)      ((q) == ctx_quasiquote(c))
+#define is_unquote(c,q)     ((q) == ctx_unquote(ctx))
+#define is_unquotes(c,q)    ((q) == ctx_unquote_splicing(c))
+
+inline bool is_boolean(Cell *c) { return ((c) && T(c) == BOOLEAN); }
+inline bool is_char(Cell *c) { return ((c) && T(c) == CHAR); }
+inline bool is_letter(Cell *c) { return ((c) && T(c) == CHAR && isalpha(char_value(c))); }
+inline bool is_number(Cell *c) { return ((c) && T(c) == NUMBER); }
+inline bool is_real(Cell *c) { return ((c) && T(c) == NUMBER && (number_type(c) == NUMBER_LONG || number_type(c) == NUMBER_DOUBLE || number_type(c) == NUMBER_FRACTION)); }
+inline bool is_exact_integer(Cell *c) { return is_number(c) && number_type(c) == NUMBER_LONG; }
+inline bool is_inexact_integer(Cell *c) { return is_number(c) && number_type(c) == NUMBER_DOUBLE && number_double(c) == (long)number_double(c); }
+inline bool is_integer(Cell *c) { return is_exact_integer(c) || is_inexact_integer(c); }
+inline bool is_double(Cell *c) { return is_number(c) && number_type(c) == NUMBER_DOUBLE; }
+inline bool is_fraction(Cell *c) { return is_number(c) && number_type(c) == NUMBER_FRACTION; }
+inline bool is_natural(Cell *c) { return (is_integer(c) && number_long(c) >= 0); }
+inline bool is_complex(Cell *c) { return (is_number(c) && number_type(c) == NUMBER_COMPLEX); }
+inline bool is_exact(Cell *c) { return (is_number(c) && (number_type(c) == NUMBER_LONG || number_type(c) == NUMBER_FRACTION || (number_type(c) == NUMBER_COMPLEX && number_type(number_cx_rl(c)) != NUMBER_DOUBLE))); }
 #define is_inexact(c)   (!is_exact(c))
-#define is_zero(c)      (is_integer(c) && number_long(c) == 0)
-#define is_string(c)  	((c) && T(c) == STRING)
-#define is_pair(c)    	((c) && T(c) == PAIR)
-#define is_vector(c)  	((c) && T(c) == VECTOR)
-#define is_symbol(c)  	((c) && T(c) == SYMBOL)
-#define is_syntax(c)  	((c) && T(c) == SYNTAX)
-#define is_closure_expr(c)	((c) && T(c) == CLOSURE_EXPR)
-#define is_closure(c) 	((c) && T(c) == CLOSURE)
-#define is_proc(c)    	((c) && T(c) == PROC)
-#define is_iproc(c)   	((c) && T(c) == IPROC)
-#define is_eproc(c)   	((c) && T(c) == EPROC)
-#define is_procs(c)   	((c) && T(c) == PROC || T(c) == IPROC || T(c) == EPROC)
-#define is_env(c)   	((c) && T(c) == ENV)
-#define is_macro(c)   	((c) && T(c) == MACRO)
-#define is_promise(c) 	((c) && T(c) == PROMISE)
-#define is_port(c)    	((c) && T(c) == PORT)
-#define is_inport(c)  	(is_port(c) && port_type(c) & PORT_INPUT)
-#define is_outport(c) 	(is_port(c) && port_type(c) & PORT_OUTPUT)
-#define is_instruct(c) 	((c) && T(c) == INSTRUCT)
-#define is_continue(c) 	((c) && T(c) == CONTINUE)
-#define is_exception(c) ((c) && T(c) == EXCEPTION)
-#define is_multivar(c)  ((c) && T(c) == MULTIVAR)
-#define is_port_eof(c) 	((c) && T(c) == PORT && ((port_type(c) & PORT_FILE) && feof(port_file(c)) || (port_type(c) & PORT_STRING) && port_string_pos(c) == port_string_end(c)))
-#define is_immutable(c) ((c) && cell_type(c) & M_IMMUTABLE)
-#define is_interactive(ctx) (port_type(ctx_inports_head(ctx)) & PORT_FILE && port_file(ctx_inports_head(ctx)) == stdin)
+inline bool is_zero(Cell *c) { return (is_exact_integer(c) && number_long(c) == 0) || (is_inexact_integer(c) && number_double(c) == 0); }
+inline bool is_string(Cell *c) { return ((c) && T(c) == STRING); }
+inline bool is_pair(Cell *c) { return ((c) && T(c) == PAIR); }
+inline bool is_vector(Cell *c) { return ((c) && T(c) == VECTOR); }
+inline bool is_symbol(Cell *c) { return ((c) && T(c) == SYMBOL); }
+inline bool is_syntax(Cell *c) { return ((c) && T(c) == SYNTAX); }
+inline bool is_closure_expr(Cell *c) { return ((c) && T(c) == CLOSURE_EXPR); }
+inline bool is_closure(Cell *c) { return ((c) && T(c) == CLOSURE); }
+inline bool is_proc(Cell *c) { return ((c) && T(c) == PROC); }
+inline bool is_iproc(Cell *c) { return ((c) && T(c) == IPROC); }
+inline bool is_eproc(Cell *c) { return ((c) && T(c) == EPROC); }
+inline bool is_procs(Cell *c) { return ((c) && T(c) == PROC || T(c) == IPROC || T(c) == EPROC); }
+inline bool is_env(Cell *c) { return ((c) && T(c) == ENV); }
+inline bool is_macro(Cell *c) { return ((c) && T(c) == MACRO); }
+inline bool is_promise(Cell *c) { return ((c) && T(c) == PROMISE); }
+inline bool is_port(Cell *c) { return ((c) && T(c) == PORT); }
+inline bool is_inport(Cell *c) { return (is_port(c) && port_type(c) & PORT_INPUT); }
+inline bool is_outport(Cell *c) { return (is_port(c) && port_type(c) & PORT_OUTPUT); }
+inline bool is_instruct(Cell *c) { return ((c) && T(c) == INSTRUCT); }
+inline bool is_continue(Cell *c) { return ((c) && T(c) == CONTINUE); }
+inline bool is_exception(Cell *c) { return ((c) && T(c) == EXCEPTION); }
+inline bool is_multivar(Cell *c) { return ((c) && T(c) == MULTIVAR); }
+inline bool is_port_eof(Cell *c) { return ((c) && T(c) == PORT && ((port_type(c) & PORT_FILE) && feof(port_file(c)) || (port_type(c) & PORT_STRING) && port_string_pos(c) == port_string_end(c))); }
+inline bool is_immutable(Cell *c) { return ((c) && cell_type(c) & M_IMMUTABLE); }
+inline bool is_interactive(Cell *ctx) { return (port_type(ctx_inports_head(ctx)) & PORT_FILE && port_file(ctx_inports_head(ctx)) == stdin); }
 
-#define symbol(c)   	(is_symbol(c) ? symbol_data(c) : CSTR(""))
-#define string(c)   	(is_string(c) ? string_data(c) : CSTR(""))
-#define port(c)     	(is_port(c) ? &c->port : NULL)
+inline char *symbol(Cell *c) { return (is_symbol(c) ? symbol_data(c) : CSTR("")); }
+inline char *string(Cell *c) { return (is_string(c) ? string_data(c) : CSTR("")); }
+inline Port *port(Cell *c) { return (is_port(c) ? &c->port : NULL); }
 
-#define rplaca(c, _a)   (is_pair(c) ? c->pair.a = _a : NULL)
-#define rplacd(c, _d)   (is_pair(c) ? c->pair.d = _d : NULL)
+inline Cell *rplaca(Cell *c, Cell *a) { return (is_pair(c) ? c->pair.a = a : NULL); }
+inline Cell *rplacd(Cell *c, Cell *d) { return (is_pair(c) ? c->pair.d = d : NULL); }
 
 #define gc_var(a,b)                     Cell *a=NULL; Preserved b={NULL,NULL}
 #define gc_var1(a)                      gc_var(a, __preserved_var1)
@@ -718,6 +730,13 @@ Cell *num_etoi(Cell *ctx, Cell *num);
 Cell *num_itoe(Cell *ctx, Cell *num);
 bool num_equal(Cell *a, Cell *b);
 double num_real_compare(Cell *a, Cell *b);
+long num_gcd(long bg, long sm);
 
 Cell *macro_analyze(Cell *ctx, Cell *lit, Cell *matches, Cell *syn_env);
 Cell *macro_transform(Cell *ctx, Cell *machers, Cell *syn_env, Cell *expr, Cell *expr_env);
+Cell *write_char(Cell *ctx, Cell *out, int c);
+Cell *write_string(Cell *ctx, Cell *out, const char *s);
+void print_cell(Cell *ctx, Cell *p, Cell *c);
+Cell *isc_init(PortType pt, FILE *in, char *src);
+Cell *isc_repl(Cell *ctx);
+void isc_finalize(Cell *ctx);

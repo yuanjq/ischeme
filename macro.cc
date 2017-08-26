@@ -119,7 +119,9 @@ static bool syntax_pattern_match_literal(Cell *ctx, Cell *mt, Cell *expr, Cell *
 static Cell *syntax_pattern_match_sequence(Cell *ctx, Cell *mt, Cell *expr, Cell *expr_env, Cell *md) {
     for (Cell *ls=matcher_value(mt); is_pair(ls); ls=cdr(ls)) {
         expr = syntax_pattern_match(ctx, car(ls), expr, expr_env, md);
-        if (expr == CELL_ERR) break;
+        if (expr == CELL_ERR) {
+            break;
+        }
     }
     return expr;
 }
@@ -134,8 +136,9 @@ Cell *syntax_pattern_match(Cell *ctx, Cell *mt, Cell *expr, Cell *expr_env, Cell
             }
             return expr;
         }
-        if (!syntax_pattern_match_literal(ctx, mt, car(expr), expr_env))
+        if (!syntax_pattern_match_literal(ctx, mt, car(expr), expr_env)) {
             return CELL_ERR;
+        }
         return cdr(expr);
     case MatcherConstant:
         if (!is_pair(expr) || !equal(car(expr), matcher_value(mt))){
@@ -163,12 +166,20 @@ Cell *syntax_pattern_match(Cell *ctx, Cell *mt, Cell *expr, Cell *expr_env, Cell
             }
             rt = cdr(rt);
         } else {
-            if (!is_pair(expr)) {
+            if (is_eof(expr)) {
+                alist_append(ctx, md, tmp = cons(ctx, matcher_name(mt), CELL_EOF));
+                gc_release(ctx);
+                return CELL_NIL;
+            } else if (!is_pair(expr)) {
                 gc_release(ctx);
                 return CELL_ERR;
             }
             rt = car(expr);
             expr = cdr(expr);
+            if (is_eof(rt)) {
+                gc_release(ctx);
+                return CELL_NIL;
+            }
         }
         alist_append(ctx, md, tmp = cons(ctx, matcher_name(mt), rt));
         gc_release(ctx);
@@ -178,14 +189,19 @@ Cell *syntax_pattern_match(Cell *ctx, Cell *mt, Cell *expr, Cell *expr_env, Cell
         if (matcher_repeat(mt)) {
             while (is_pair(expr)) expr = cdr(expr);
         } else {
-            if (!is_pair(expr)) return CELL_ERR;
+            if (!is_pair(expr)) {
+                return CELL_ERR;
+            }
             expr = cdr(expr);
         }
         return expr;
     case MatcherRest: {
         gc_var1(tmp);
         gc_preserve1(ctx, tmp);
-        tmp = syntax_pattern_match(ctx, matcher_value(mt), tmp = cons(ctx, expr, CELL_NIL), expr_env, md);
+        if (is_nil(expr)) {
+            expr = CELL_EOF;
+        }
+        tmp = syntax_pattern_match(ctx, matcher_value(mt), expr, expr_env, md);
         gc_release(ctx);
         return tmp;
     }
@@ -202,8 +218,12 @@ Cell *syntax_pattern_match(Cell *ctx, Cell *mt, Cell *expr, Cell *expr_env, Cell
             gc_release(ctx);
             return expr;
         }
-        if (!is_pair(expr)) return CELL_ERR;
-        if (syntax_pattern_match_sequence(ctx, mt, car(expr), expr_env, md) != CELL_NIL) return CELL_ERR;
+        if (!is_pair(expr)) {
+            return CELL_ERR;
+        }
+        if (syntax_pattern_match_sequence(ctx, mt, car(expr), expr_env, md) != CELL_NIL) {
+            return CELL_ERR;
+        }
         return cdr(expr);
     }
     return CELL_ERR;
@@ -214,23 +234,47 @@ static Cell *_variable_expand(Cell *ctx, Cell *v) {
     gc_preserve1(ctx, ret);
     ret = cons(ctx, CELL_NIL, CELL_NIL);
     for (; is_pair(v); v=cdr(v)) {
-        list_extend(ctx, ret, car(v));
+        list_add(ctx, ret, car(v));
     }
     gc_release(ctx);
     return cdr(ret);
+}
+
+static inline bool is_internal_symbol(Cell *ctx, Cell *c) {
+    if (is_quote(ctx, c) || is_qquote(ctx, c) || is_unquote(ctx, c) ||
+            is_unquotes(ctx, c)) {
+        return true;
+    }
+    return false;
 }
 
 static Cell *_sequence_expand0(Cell *ctx, Cell *expd, Cell *md, Cell *env, Cell *idx) {
     gc_var2(ret, c);
     gc_preserve2(ctx, ret, c);
     ret = cons(ctx, CELL_NIL, CELL_NIL);
-    for (Cell *ls=expander_value(expd); is_pair(ls); ls=cdr(ls)) {
-        c = syntax_template_expand(ctx, car(ls), md, env, idx);
-        if (c) list_extend(ctx, ret, c);
+    for (Cell *ls=expander_value(expd), *t; is_pair(ls); ls=cdr(ls)) {
+        t = car(ls);
+        c = syntax_template_expand(ctx, t, md, env, idx);
+        if (!is_error(c) && !is_eof(c)) {
+            if (expander_n(t) > 0) {
+                if (is_closure_expr(c) && is_pair(closure_expr_expr(c))) {
+                    Cell *env = closure_expr_env(c);
+                    c = closure_expr_expr(c);
+                    for (Cell *ls=c, *t; is_pair(ls); ls=cdr(ls)) {
+                        t = car(ls);
+                        if (is_pair(t) || (is_symbol(t) && !is_internal_symbol(ctx, t))) {
+                            rplaca(ls, mk_closure_expr(ctx, t, env));
+                        }
+                    }
+                }
+                list_extend(ctx, ret, c);
+            } else {
+                list_add(ctx, ret, c);
+            }
+        }
     }
-    ret = cons(ctx, cdr(ret), CELL_NIL); 
     gc_release(ctx);
-    return ret;
+    return cdr(ret);
 }
 
 static Cell *_sequence_expand(Cell *ctx, Cell *expd, Cell *md, Cell *env, Cell *idx, int expd_n) {
@@ -238,17 +282,22 @@ static Cell *_sequence_expand(Cell *ctx, Cell *expd, Cell *md, Cell *env, Cell *
     int len=0;
     for (Cell *c=expander_name(expd); is_pair(c); c=cdr(c)) {
         Cell *var = assq(car(c), md);
-        var = cadr(var);
-        for (Cell *ls=idx; is_pair(var) && is_pair(ls) && !is_nil(car(ls)); ls=cdr(ls)) {
-            var = list_ref(var, car(ls));
+        if (is_nil(var)) continue;
+        var = cdr(var);
+        for (Cell *ls=cdr(idx); is_pair(var) && is_pair(ls) && !is_nil(car(ls)); ls=cdr(ls)) {
+            if (is_pair(var)) {
+                var = list_ref(var, car(ls));
+            }
         }
-        if (!is_pair(var)) {
-            return mk_exception(ctx, SyntaxError, mk_string(ctx, "too many ellipsis for variable:"), c, NULL);
+        if (is_pair(var)) {
+            if (len == 0) {
+                len = length(var);
+            } else if (length(var) > len) {
+                len = length(var);
+            }
+        } else if (len == 0) {
+            len = 1;
         }
-        if (len == 0 || len == length(var))
-            len = length(var);
-        else
-            return mk_exception(ctx, SyntaxError, mk_string(ctx, "unmatched ellipsis counts for variable:"), c, NULL);
     }
     if (len > 0) {
         gc_var3(ret, v1, v2);
@@ -256,29 +305,24 @@ static Cell *_sequence_expand(Cell *ctx, Cell *expd, Cell *md, Cell *env, Cell *
         list_add(ctx, idx, v1 = mk_long(ctx, 0));
         ret = cons(ctx, CELL_NIL, CELL_NIL);
         for (int i=0; i<len; i++) {
-            list_set(idx, v1 = mk_long(ctx, length(idx) - 1), v2 = mk_long(ctx, i));
-            list_extend(ctx, ret, v1 = _sequence_expand(ctx, expd, md, env, idx, expd_n - 1));
+            list_set(cdr(idx), v1 = mk_long(ctx, length(cdr(idx)) - 1), v2 = mk_long(ctx, i));
+            v1 = _sequence_expand(ctx, expd, md, env, idx, expd_n - 1);
+            if (!is_eof(v1)) {
+                list_add(ctx, ret, v1);
+            }
         }
         list_pop(idx);
         gc_release(ctx);
         return cdr(ret);
     }
-    return CELL_NIL;
+    return CELL_EOF;
 }
 
 static Cell *_transform_closure_expr(Cell *ctx, Cell *expr, Cell *env) {
-    if (is_pair(expr)) {
-        for (Cell *ls=expr, *c; is_pair(ls); ls=cdr(ls)) {
-            c = car(ls);
-            if (is_pair(c) || is_symbol(c)) {
-                rplaca(ls, mk_closure_expr(ctx, c, env));
-            }
-        }
-        return expr;
-    } else if (is_symbol(expr)) {
+    if (is_pair(expr) || (is_symbol(expr) && !is_internal_symbol(ctx, expr))) {
         return mk_closure_expr(ctx, expr, env);
     }
-    return expr; 
+    return expr;
 }
 
 static Cell *syntax_template_expand(Cell *ctx, Cell *expd, Cell *md, Cell *env, Cell *idx) {
@@ -287,7 +331,7 @@ static Cell *syntax_template_expand(Cell *ctx, Cell *expd, Cell *md, Cell *env, 
         return expander_value(expd);
     case ExpanderVariable: {
         Cell *var = assq(expander_name(expd), md);
-        if (is_nil(var)) return NULL;
+        if (is_nil(var)) return CELL_EOF;
         var = cdr(var);
         for (Cell *ls=cdr(idx); is_pair(ls) && !is_nil(car(ls)) && is_pair(var); ls=cdr(ls)) {
             var = list_ref(var, car(ls));
@@ -425,8 +469,9 @@ Cell *macro_transform(Cell *ctx, Cell *machers, Cell *syn_env, Cell *expr, Cell 
     for (; is_pair(ls); ls=cdr(ls)) {
         md = cons(ctx, CELL_NIL, CELL_NIL);
         Cell *rt = syntax_pattern_match(ctx, caar(ls), tmp = cons(ctx, expr, CELL_NIL), expr_env, md);
-        if (rt == CELL_NIL)
+        if (rt == CELL_NIL) {
             break;
+        }
     }
     if (is_pair(ls) && is_pair(car(ls))) tmpl = cdar(ls);
     if (!tmpl) {

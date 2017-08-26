@@ -2056,12 +2056,16 @@ Loop:
     case OP_DYNAMIC_WIND3:
         popOp(ctx, ctx_args(ctx));
     case OP_SCHEME_REPORT_ENV:
-        if (number_long(car(ctx_args(ctx))) != 5) {
+        c = car(ctx_args(ctx));
+        if ((is_exact_integer(c) && number_long(c) != 5) ||
+                (is_inexact_integer(c) && number_double(c) != 5)) {
             gotoErr(ctx, mk_exception(ctx, ValueError, mk_string(ctx, "scheme-report-environment: unsupported revision"), NULL, NULL));
         }
         popOp(ctx, ctx_r5rs_env(ctx));
     case OP_NULL_ENV:
-        if (number_long(car(ctx_args(ctx))) != 5) {
+        c = car(ctx_args(ctx));
+        if ((is_exact_integer(c) && number_long(c) != 5) ||
+                (is_inexact_integer(c) && number_double(c) != 5)) {
             gotoErr(ctx, mk_exception(ctx, ValueError, mk_string(ctx, "null-environment: unsupported revision"), NULL, NULL));
         }
         popOp(ctx, ctx_null_env(ctx));
@@ -3300,10 +3304,16 @@ Loop:
         popOp(ctx, d);
     case OP_ODD_P:
         c = car(ctx_args(ctx));
-        popOp(ctx, number_long(c) % 2 ? CELL_TRUE : CELL_FALSE);
+        if (is_exact_integer(c)) {
+            popOp(ctx, number_long(c) % 2 ? CELL_TRUE : CELL_FALSE);
+        }
+        popOp(ctx, (long)number_double(c) % 2 ? CELL_TRUE : CELL_FALSE);
     case OP_EVEN_P:
         c = car(ctx_args(ctx));
-        popOp(ctx, number_long(c) % 2 ? CELL_FALSE : CELL_TRUE);
+        if (is_exact_integer(c)) {
+            popOp(ctx, number_long(c) % 2 ? CELL_FALSE : CELL_TRUE);
+        }
+        popOp(ctx, (long)number_double(c) % 2 ? CELL_FALSE : CELL_TRUE);
     case OP_LP:
     case OP_GP:
     case OP_LEP:
@@ -3382,12 +3392,11 @@ Loop:
                 is_fraction(b)) {
             gotoErr(ctx, mk_exception(ctx, TypeError, mk_string(ctx, "type of arguments error"), NULL, NULL));
 
-        } else if ((is_integer(b) && (number_long(b) == 0)) ||
-                (is_double(b) && (number_double(b) == 0))) {
+        } else if (is_zero(b)) {
             gotoErr(ctx, mk_exception(ctx, ValueError, mk_string(ctx, "number devide by zero"), NULL, NULL));
         }
-        long na = (long)(is_integer(a) ? number_long(a) : number_double(a));
-        long nb = (long)(is_integer(b) ? number_long(b) : number_double(b));
+        long na = (long)(is_exact_integer(a) ? number_long(a) : number_double(a));
+        long nb = (long)(is_exact_integer(b) ? number_long(b) : number_double(b));
         if (is_double(a) || is_double(b)) {
             switch (op) {
             case OP_QUOTIENT:
@@ -3407,6 +3416,120 @@ Loop:
             popOp(ctx, mk_long(ctx, (long)(na - floor((double)na / nb) * nb)));
         }
     }
+    case OP_GCD:
+    {
+        a = ctx_args(ctx);
+        if (length(a) == 0) {
+            popOp(ctx, mk_long(ctx, 0));
+        } else if(length(a) == 1) {
+            popOp(ctx, car(a));
+        }
+        b = car(a);
+        c = cadr(a);
+        d = cddr(a);
+        long nb = is_exact_integer(b) ? number_long(b) : (long)number_double(b);
+        long nc = is_exact_integer(c) ? number_long(c) : (long)number_double(c);
+        long gcd = num_gcd(nb, nc);
+        bool exact = is_exact_integer(b) && is_exact_integer(c);
+        for (long ne=0; is_pair(d); d=cdr(d)) {
+            e = car(d);
+            if (is_exact_integer(e)) {
+                ne = number_long(e);
+            } else {
+                ne = number_double(e);
+                exact = false;
+            }
+            gcd = num_gcd(gcd, ne);
+        }
+        if (exact) {
+            popOp(ctx, mk_long(ctx, gcd));
+        }
+        popOp(ctx, mk_double(ctx, gcd));
+    }
+    case OP_LCM:
+    {
+        a = ctx_args(ctx);
+        if (length(a) == 0) {
+            popOp(ctx, mk_long(ctx, 1));
+        } else if(length(a) == 1) {
+            popOp(ctx, car(a));
+        }
+        b = car(a);
+        c = cadr(a);
+        d = cddr(a);
+        long nb = is_exact_integer(b) ? number_long(b) : (long)number_double(b);
+        long nc = is_exact_integer(c) ? number_long(c) : (long)number_double(c);
+        nb = nb < 0 ? - nb : nb;
+        nc = nc < 0 ? - nc : nc;
+        long gcd = num_gcd(nb, nc);
+        bool exact = is_exact_integer(b) && is_exact_integer(c);
+        long long product = nb * nc;
+        long lcm = product / gcd;;
+        long ne; 
+        for (Cell *ls=d; is_pair(ls); ls=cdr(ls)) {
+            e = car(ls);
+            if (is_exact_integer(e)) {
+                ne = number_long(e);
+            } else {
+                ne = number_double(e);
+                exact = false;
+            }
+            ne = ne < 0 ? - ne : ne;
+            product = product * ne;
+            gcd = num_gcd(gcd, ne);
+        }
+        if (is_pair(d)) {
+            lcm = product / (long long)powl(gcd, length(a) - 1);
+        }
+        if (exact) {
+            popOp(ctx, mk_long(ctx, lcm));
+        }
+        popOp(ctx, mk_double(ctx, lcm));
+    }
+    case OP_INEXACT_TO_EXACT:
+        popOp(ctx, num_itoe(ctx, car(ctx_args(ctx))));
+    case OP_EXACT_TO_INEXACT:
+        popOp(ctx, num_etoi(ctx, car(ctx_args(ctx))));
+    case OP_MAX:
+        a = ctx_args(ctx);
+        if (is_pair(cdr(a))) {
+            b = car(a);
+            for (Cell *ls=cdr(a); is_pair(ls); ls=cdr(ls)) {
+                if (num_real_compare(car(ls), b) > 0) {
+                    b = car(ls);
+                }
+            }
+            popOp(ctx, b);
+        }
+        popOp(ctx, car(a));
+    case OP_MIN:
+        a = ctx_args(ctx);
+        if (is_pair(cdr(a))) {
+            b = car(a);
+            for (Cell *ls=cdr(a); is_pair(ls); ls=cdr(ls)) {
+                if (num_real_compare(car(ls), b) < 0) {
+                    b = car(ls);
+                }
+            }
+            popOp(ctx, b);
+        }
+        popOp(ctx, car(a));
+    case OP_REAL_PART:
+        a = car(ctx_args(ctx));
+        if (is_complex(a)) {
+            popOp(ctx, number_cx_rl(a));
+        }
+        popOp(ctx, a);
+    case OP_IMAG_PART:
+        a = car(ctx_args(ctx));
+        if (is_complex(a)) {
+            popOp(ctx, number_cx_im(a));
+        }
+        popOp(ctx, mk_long(ctx, 0));
+    case OP_NUMBER_TO_STRING:
+        break;
+    case OP_INTEGER_TO_CHAR:
+        break;
     default:
         break;
     }

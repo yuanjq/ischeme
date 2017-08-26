@@ -15,7 +15,7 @@ Cell *mk_double(Cell *ctx, double d) {
     return num;
 }
 
-static long num_gcd(long bg, long sm)
+long num_gcd(long bg, long sm)
 {
     if (bg < 0) bg = -bg;
     if (sm < 0) sm = -sm;
@@ -155,7 +155,7 @@ double num_real_compare(Cell *a, Cell *b) {
         d1 = number_double(a);
         break;
     case NUMBER_FRACTION:
-        d1 = number_long(number_fn_nr(a)) / number_long(number_fn_dr(a));
+        d1 = (double)number_long(number_fn_nr(a)) / (double)number_long(number_fn_dr(a));
         break;
     }
     switch (number_type(b)) {

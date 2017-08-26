@@ -587,14 +587,16 @@ inline bool is_char(Cell *c) { return ((c) && T(c) == CHAR); }
 inline bool is_letter(Cell *c) { return ((c) && T(c) == CHAR && isalpha(char_value(c))); }
 inline bool is_number(Cell *c) { return ((c) && T(c) == NUMBER); }
 inline bool is_real(Cell *c) { return ((c) && T(c) == NUMBER && (number_type(c) == NUMBER_LONG || number_type(c) == NUMBER_DOUBLE || number_type(c) == NUMBER_FRACTION)); }
-inline bool is_integer(Cell *c) { return (is_number(c) && number_type(c) == NUMBER_LONG); }
+inline bool is_exact_integer(Cell *c) { return is_number(c) && number_type(c) == NUMBER_LONG; }
+inline bool is_inexact_integer(Cell *c) { return is_number(c) && number_type(c) == NUMBER_DOUBLE && number_double(c) == (long)number_double(c); }
+inline bool is_integer(Cell *c) { return is_exact_integer(c) || is_inexact_integer(c); }
 inline bool is_double(Cell *c) { return is_number(c) && number_type(c) == NUMBER_DOUBLE; }
 inline bool is_fraction(Cell *c) { return is_number(c) && number_type(c) == NUMBER_FRACTION; }
 inline bool is_natural(Cell *c) { return (is_integer(c) && number_long(c) >= 0); }
 inline bool is_complex(Cell *c) { return (is_number(c) && number_type(c) == NUMBER_COMPLEX); }
 inline bool is_exact(Cell *c) { return (is_number(c) && (number_type(c) == NUMBER_LONG || number_type(c) == NUMBER_FRACTION || (number_type(c) == NUMBER_COMPLEX && number_type(number_cx_rl(c)) != NUMBER_DOUBLE))); }
 #define is_inexact(c)   (!is_exact(c))
-inline bool is_zero(Cell *c) { return (is_integer(c) && number_long(c) == 0); }
+inline bool is_zero(Cell *c) { return (is_exact_integer(c) && number_long(c) == 0) || (is_inexact_integer(c) && number_double(c) == 0); }
 inline bool is_string(Cell *c) { return ((c) && T(c) == STRING); }
 inline bool is_pair(Cell *c) { return ((c) && T(c) == PAIR); }
 inline bool is_vector(Cell *c) { return ((c) && T(c) == VECTOR); }
@@ -728,6 +730,7 @@ Cell *num_etoi(Cell *ctx, Cell *num);
 Cell *num_itoe(Cell *ctx, Cell *num);
 bool num_equal(Cell *a, Cell *b);
 double num_real_compare(Cell *a, Cell *b);
+long num_gcd(long bg, long sm);
 
 Cell *macro_analyze(Cell *ctx, Cell *lit, Cell *matches, Cell *syn_env);
 Cell *macro_transform(Cell *ctx, Cell *machers, Cell *syn_env, Cell *expr, Cell *expr_env);

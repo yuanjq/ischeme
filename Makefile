@@ -1,18 +1,19 @@
-DEBUG = 1
+DEBUG = 0
 CXX = g++
 ifeq ($(DEBUG), 1)
-CXXFLAGS += -std=c++11
+CXXFLAGS += -std=c++11 -Wl,-rpath=.
+INSTALL_DIR = "."
 else
 CXXFLAGS += -std=c++11 -O2
+INSTALL_DIR = "/usr/local"
 endif
 CLIBFLAGS = -fPIC
 LDFLAGS += -lm
 
 TARGET = ischeme
 TARGET_HEADER = ischeme.h
-TARGET_LIB_DIR = lib
+TARGET_LIB_DIR = lib/ischeme
 TARGET_SO = libischeme.so
-INSTALL_DIR = /usr/local
 INSTALL_LIB_DIR = $(INSTALL_DIR)/lib/ischeme
 CXXFLAGS += -DISC_LIB_DIR=\"$(INSTALL_LIB_DIR)\"
 SRC =  ischeme.cc compiler.cc gc.cc macro.cc numeric.cc vm.cc
